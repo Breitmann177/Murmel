@@ -1,23 +1,26 @@
-"""Steuerung: verbindet Hotkey, Mikrofon, Whisper, Einfügen und Pille.
+"""Steuerung: verbindet Hotkey, Mikrofon, Whisper, Einfügen, Pille, Hauptfenster und Tray.
 
 Threads (und warum):
 - kbd-hook   : Low-Level-Hook braucht eigenen Message-Loop
 - PortAudio  : Mikrofon-Callback (in audio.py)
-- worker     : Modell laden + Erkennen + Einfügen (blockiert sonst das UI)
+- worker     : Modell laden + Erkennen + Einfügen + Speichern (würde sonst das UI blockieren)
 - Qt-Hauptthread: NUR hier wird das UI angefasst. Andere Threads melden sich über Qt-Signals;
-  Qt stellt die Signale automatisch in die Warteschlange des Hauptthreads (QueuedConnection).
+  Qt stellt sie automatisch in die Warteschlange des Hauptthreads (QueuedConnection).
 """
 import logging
 import threading
 import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import cleanup
 import config
 import inject
+import sounds
+import storage
+import theme
 from audio import SR, Mic
 from hotkeys import PushToTalkHook
 from stt import STT
@@ -29,24 +32,9 @@ log = logging.getLogger("murmel")
 
 class Bridge(QObject):
     hotkey = Signal(str)
-    loaded = Signal(str)
+    loaded = Signal(str, bool)
     load_failed = Signal(str)
     result = Signal(dict)
-
-
-def tray_icon():
-    pm = QPixmap(64, 64)
-    pm.fill(QColor(0, 0, 0, 0))
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(QColor("#14513F"))
-    p.setPen(QColor(0, 0, 0, 0))
-    p.drawRoundedRect(4, 4, 56, 56, 18, 18)
-    p.setBrush(QColor("#F8F6EE"))
-    for i, h in enumerate((14, 26, 36, 26, 14)):
-        p.drawRoundedRect(13 + i * 8, 32 - h / 2, 5, h, 2.5, 2.5)
-    p.end()
-    return QIcon(pm)
 
 
 class Controller(QObject):
@@ -54,17 +42,19 @@ class Controller(QObject):
         super().__init__()
         self.app = app
         self.cfg = config.load()
+        theme.load_fonts()
         self.bridge = Bridge()
         self.mic = Mic(self.cfg.get("mic_device"))
         self.stt = STT(self.cfg)
         self.pill = Pill(level_source=lambda: self.mic.level)
+        self.pill.set_theme(theme.tokens(self.cfg.get("theme", "system")))
+        self.window = None
+        self.engine_text, self.engine_gpu = "lädt …", False
         self.ready = False
-        self.paused = False
         self.state = "idle"          # idle | recording | handsfree | processing
         self.target = None
         self.t_press = 0.0
         self.last_tap = 0.0
-        self._busy = threading.Lock()
 
         b = self.bridge
         b.hotkey.connect(self.on_hotkey)
@@ -73,6 +63,11 @@ class Controller(QObject):
         b.result.connect(self.on_result)
         self.pill.cancel_clicked.connect(self.cancel)
         self.pill.finish_clicked.connect(self.finish)
+        self.pill.open_window.connect(self.open_window)
+        self.pill.start_handsfree.connect(self.start_handsfree)
+        self.pill.copy_last.connect(self.copy_last)
+        # System-Theme gewechselt (bei "System")? -> neu einfärben
+        QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _: self.apply_theme())
 
         self.hf_timer = QTimer(self, singleShot=True)
         self.hf_timer.timeout.connect(self.finish)
@@ -80,51 +75,128 @@ class Controller(QObject):
         self._build_tray()
         self.pill.show()
         self.pill.set_state("loading")
+        self._start_mic()
+        self.hook = None
+        self._start_hook()
+        threading.Thread(target=self._load, daemon=True, name="loader").start()
 
+    # --------------------------------------------------------------- Setup
+    def _start_mic(self):
         try:
             self.mic.start()
         except Exception as e:  # noqa: BLE001
             log.error("Mikrofon: %s", e)
             self.pill.set_state("error", "Kein Mikrofon", 5000)
 
-        self.hook = PushToTalkHook(self.cfg["hotkey"], b.hotkey.emit)
+    def _start_hook(self):
+        if self.hook:
+            self.hook.stop()
+        self.hook = PushToTalkHook(self.cfg["hotkey"], self.bridge.hotkey.emit)
         self.hook.start()
-        threading.Thread(target=self._load, daemon=True, name="loader").start()
+        names = {"ctrl": "Strg", "win": "Win", "alt": "Alt", "shift": "Shift", "rctrl": "Rechte Strg"}
+        self.pill.hint = " + ".join(names[k] for k in self.cfg["hotkey"])
+
+    def list_mics(self):
+        try:
+            import sounddevice as sd
+            seen, out = set(), []
+            for i, d in enumerate(sd.query_devices()):
+                if d["max_input_channels"] > 0 and d["hostapi"] == 0 and "mapper" not in d["name"].lower():
+                    if d["name"] not in seen:
+                        seen.add(d["name"])
+                        out.append((i, d["name"]))
+            return out
+        except Exception:
+            return []
 
     # ---------------------------------------------------------------- Tray
     def _build_tray(self):
-        self.tray = QSystemTrayIcon(tray_icon(), self.app)
+        import os
+        self.tray = QSystemTrayIcon(QIcon(os.path.join(theme.ASSETS, "murmel.ico")), self.app)
         self.tray.setToolTip("Murmel – lädt …")
+        self.tray.activated.connect(
+            lambda reason: self.open_window() if reason == QSystemTrayIcon.Trigger else None)
         m = QMenu()
+        m.addAction("Murmel öffnen", self.open_window)
         self.act_pause = QAction("Pausieren", m, checkable=True)
         self.act_pause.toggled.connect(self.set_paused)
         m.addAction(self.act_pause)
+        lang_menu = m.addMenu("Sprache")
+        grp = QActionGroup(lang_menu)
+        self.lang_actions = {}
+        for key, text in (("auto", "Auto (DE/EN)"), ("de", "Deutsch"), ("en", "Englisch")):
+            a = QAction(text, lang_menu, checkable=True)
+            a.setChecked(self.cfg.get("language") == key)
+            a.triggered.connect(lambda _=False, k=key: self.change_setting("language", k))
+            grp.addAction(a)
+            lang_menu.addAction(a)
+            self.lang_actions[key] = a
         m.addSeparator()
-        quit_act = QAction("Beenden", m)
-        quit_act.triggered.connect(self.quit)
-        m.addAction(quit_act)
+        m.addAction("Beenden", self.quit)
         self.tray.setContextMenu(m)
         self._menu = m
         self.tray.show()
 
     def set_paused(self, on):
-        self.paused = on
         self.hook.enabled = not on
         self.pill.setVisible(not on)
+
+    # ------------------------------------------------------------- Fenster
+    def open_window(self, page="home"):
+        if self.window is None:                      # erst bei Bedarf bauen: schnellerer Start
+            from ui.main_window import MainWindow
+            self.window = MainWindow(self)
+            self.window.setWindowIcon(self.tray.icon())
+            self.window.setting_changed.connect(self.change_setting)
+            self.window.set_status(self.engine_text if self.ready else "Modell lädt …")
+            self.window.set_engine(self.engine_text, self.engine_gpu)
+        self.window.open(page)
+
+    def apply_theme(self):
+        t = theme.tokens(self.cfg.get("theme", "system"))
+        self.pill.set_theme(t)
+        if self.window:
+            self.window.apply_theme()
+
+    def change_setting(self, key, value):
+        if self.cfg.get(key) == value:
+            return
+        self.cfg[key] = value
+        config.save(self.cfg)
+        log.info("Einstellung %s = %r", key, value)
+        if key == "hotkey":
+            self._start_hook()
+        elif key == "mic_device":
+            self.mic.close()
+            self.mic = Mic(value)
+            self.pill.level_source = lambda: self.mic.level
+            self._start_mic()
+        elif key == "theme":
+            self.apply_theme()
+        elif key == "language" and key in ("language",):
+            for k, a in self.lang_actions.items():
+                a.setChecked(k == value)
+        if self.window and key == "name":
+            self.window.refresh()
 
     # ---------------------------------------------------------------- Laden
     def _load(self):
         try:
             self.stt.load()
-            self.bridge.loaded.emit(f"{self.stt.model_name} · {self.stt.device.upper()}")
-        except Exception as e:  # noqa: BLE001
+            gpu = self.stt.device == "cuda"
+            self.bridge.loaded.emit(f"{self.stt.model_name} · {'GPU' if gpu else 'CPU'}", gpu)
+        except Exception:  # noqa: BLE001
             log.exception("Modell")
             self.bridge.load_failed.emit("Modell nicht ladbar")
 
-    def on_loaded(self, info):
+    def on_loaded(self, info, gpu):
         self.ready = True
+        self.engine_text, self.engine_gpu = info, gpu
         self.tray.setToolTip(f"Murmel – bereit ({info})")
         self.pill.set_state("idle")
+        if self.window:
+            self.window.set_status(info)
+            self.window.set_engine(info, gpu)
         log.info("Bereit: %s", info)
 
     # -------------------------------------------------------------- Hotkey
@@ -141,34 +213,51 @@ class Controller(QObject):
             if not self.ready:
                 self.pill.set_state("error", "Modell lädt noch …", 1500)
                 return
-            # Ziel-Fenster JETZT merken – beim Loslassen könnte schon ein anderes vorne sein
-            self.target = user32.GetForegroundWindow()
-            self.t_press = now
-            self.mic.begin()
-            self.hook.swallow_esc = True
-            if now - self.last_tap < self.cfg["double_tap_s"]:
-                self.state = "handsfree"          # Doppeltippen -> Freihand
-                self.pill.set_state("handsfree")
-                self.hf_timer.start(int(self.cfg["handsfree_max_s"] * 1000))
-            else:
-                self.state = "recording"
-                self.pill.set_state("recording")
+            handsfree = now - self.last_tap < self.cfg["double_tap_s"]
+            self._begin(user32.GetForegroundWindow(), handsfree)
         elif ev == "release":
             if self.state != "recording":
                 return
             if now - self.t_press < self.cfg["min_press_s"]:
                 self.last_tap = now               # Versehen – oder erster Tipp eines Doppeltipps
-                self._reset("idle")
+                self._reset("idle", sound=False)
                 return
             self.finish()
         elif ev == "other":
             if self.state == "recording":         # z. B. Strg+Win+D (Windows-Kürzel)
-                self._reset("idle")
+                self._reset("idle", sound=False)
         elif ev == "esc":
             if self.state in ("recording", "handsfree"):
                 self.cancel()
 
-    def _reset(self, pill_state):
+    def _begin(self, target, handsfree):
+        # Ziel-Fenster JETZT merken – beim Loslassen könnte schon ein anderes vorne sein
+        self.target = target
+        self.t_press = time.monotonic()
+        self.mic.begin()
+        self.hook.swallow_esc = True
+        sounds.play("start", self.cfg.get("sounds", True))
+        if handsfree:
+            self.state = "handsfree"
+            self.pill.set_state("handsfree")
+            self.hf_timer.start(int(self.cfg["handsfree_max_s"] * 1000))
+        else:
+            self.state = "recording"
+            self.pill.set_state("recording")
+
+    def start_handsfree(self):
+        """Klick auf ● in der Pille. Die Pille aktiviert sich nie, also ist das Vordergrund-
+        fenster immer noch deine App – genau dorthin kommt der Text."""
+        if self.state == "idle" and self.ready:
+            self._begin(user32.GetForegroundWindow(), True)
+
+    def copy_last(self):
+        rows = storage.history(limit=1)
+        if rows:
+            inject.set_text(rows[0]["clean"], exclude_history=False)
+            self.pill.mark_copied()
+
+    def _reset(self, pill_state, sound=True):
         self.mic.cancel()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -187,6 +276,7 @@ class Controller(QObject):
         self.hf_timer.stop()
         self.state = "processing"
         self.pill.set_state("processing")
+        sounds.play("stop", self.cfg.get("sounds", True))
         t_release = time.perf_counter()
         threading.Thread(target=self._process, args=(audio, self.target, t_release),
                          daemon=True, name="worker").start()
@@ -204,13 +294,17 @@ class Controller(QObject):
                 res["error"] = "Nichts verstanden"
                 return
             t_paste = time.perf_counter()
-            mode = inject.paste(text + " ", target, self.cfg["paste_restore_ms"])
+            # Leerzeichen hinten, damit das nächste Diktat nicht am Wort klebt (nicht nach Umbruch)
+            mode = inject.paste(text if text.endswith("\n") else text + " ", target,
+                                self.cfg["paste_restore_ms"])
             total = time.perf_counter() - t_release
-            log.info("Latenz %.2fs (Erkennung %.2fs, Einfügen %.2fs) | %.1fs Audio | %s | %s | %r",
+            app = process_name(target)
+            log.info("Latenz %.2fs (Erkennung %.2fs, Einfügen %.2fs) | %.1fs Audio | %s | %s",
                      total, t_stt, time.perf_counter() - t_paste - self.cfg["paste_restore_ms"] / 1000,
-                     len(audio) / SR, lang, process_name(target), text)
+                     len(audio) / SR, lang, app)
+            storage.add_history(app, raw, text, lang, len(audio) / SR, total)
             res.update(ok=True, mode=mode, text=text, latency=total)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             log.exception("Verarbeitung")
             res["error"] = "Fehler beim Erkennen"
         finally:
@@ -224,6 +318,8 @@ class Controller(QObject):
             self.pill.set_state("error", "In der Zwischenablage", 2200)
         else:
             self.pill.set_state("done", hold_ms=600)
+        if self.window and self.window.isVisible():
+            self.window.refresh()
 
     # ---------------------------------------------------------------- Ende
     def quit(self):

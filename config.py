@@ -20,6 +20,9 @@ DEFAULTS = {
     "double_tap_s": 0.45,               # zweimal tippen = Freihand
     "handsfree_max_s": 360,
     "paste_restore_ms": 220,            # so lange bleibt der Text in der Zwischenablage
+    "name": "",                         # für "Guten Morgen, …"
+    "sounds": True,
+    "theme": "system",                  # light | dark | system
 }
 
 

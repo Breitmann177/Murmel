@@ -15,7 +15,7 @@ import time
 
 from PySide6.QtCore import (QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer,
                             Property, QParallelAnimationGroup, Signal)
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 WIN_W, WIN_H = 320, 96          # festes (unsichtbares) Fenster, Pille wird darin gezeichnet
@@ -25,7 +25,7 @@ BARS = 12
 SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "loading": (96, 10),
     "idle": (40, 8),
-    "hover": (138, 32),
+    "hover": (242, 46),          # aufgeklappt wie NoTime: Knöpfe + Logo
     "recording": (164, 40),
     "handsfree": (232, 40),
     "processing": (164, 40),
@@ -34,9 +34,17 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
 }
 
 
+# Knöpfe im aufgeklappten Zustand: Abstand von der Mitte (wie bei NoTime)
+SLOTS = {"settings": -94, "record": -56, "logo": 0, "open": 56, "copy": 94}
+GLYPHS = {"settings": "\uE713", "record": "\uE7C8", "open": "\uE740", "copy": "\uE8C8"}
+
+
 class Pill(QWidget):
     cancel_clicked = Signal()
     finish_clicked = Signal()
+    open_window = Signal(str)        # "home" | "settings"
+    start_handsfree = Signal()
+    copy_last = Signal()
 
     def __init__(self, level_source=None):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
@@ -69,8 +77,42 @@ class Pill(QWidget):
         self._tick.timeout.connect(self._on_tick)
         self._back = QTimer(self, singleShot=True)
         self._back.timeout.connect(lambda: self.set_state("idle"))
+        # Zuklappen leicht verzögert, damit die Pille nicht flackert, wenn man kurz rausrutscht
+        self._leave = QTimer(self, singleShot=True)
+        self._leave.setInterval(380)
+        self._leave.timeout.connect(self._collapse)
+
+        self._hover_slot = None
+        self._copied_until = 0.0
+        self._logo = None
+        self.colors = {"pill": "#121214", "pill_fg": "#F2F2F2", "line": "#2A2A2A", "hover": "#262626"}
+        self.icon_family = "Segoe Fluent Icons"
 
         self.place()
+
+    def set_theme(self, t: dict):
+        """Aufgeklappte Pille folgt dem App-Theme (hell = weiß wie bei NoTime)."""
+        self.colors = {k: t[k] for k in ("pill", "pill_fg", "line", "hover")}
+        self._logo = None
+        self.update()
+
+    def _logo_pixmap(self):
+        if self._logo is None:
+            import numpy as np
+            import logo
+            dpr = self.devicePixelRatioF()
+            px = int(28 * dpr)
+            arr = np.ascontiguousarray(logo.render(px, self.colors["pill_fg"]))
+            img = QImage(arr.data, px, px, 4 * px, QImage.Format_RGBA8888).copy()
+            pm = QPixmap.fromImage(img)
+            pm.setDevicePixelRatio(dpr)
+            self._logo = pm
+        return self._logo
+
+    def mark_copied(self):
+        self._copied_until = time.monotonic() + 1.4
+        self.update()
+        QTimer.singleShot(1450, self.update)
 
     # ------------------------------------------------------- Eigenschaften
     def _get_w(self):
@@ -172,24 +214,56 @@ class Pill(QWidget):
 
     # -------------------------------------------------------------- Maus
     def enterEvent(self, e):
-        self._hovered = True
-        if self.state == "idle":
-            self.set_state("idle")
+        self._leave.stop()
+        if not self._hovered:
+            self._hovered = True
+            if self.state == "idle":
+                self.set_state("idle")
 
     def leaveEvent(self, e):
+        self._leave.start()
+
+    def _collapse(self):
         self._hovered = False
+        self._hover_slot = None
         if self.state == "idle":
             self.set_state("idle")
 
-    def mousePressEvent(self, e):
-        if self.state != "handsfree":
-            return
+    def _slot_at(self, x, y):
         r = self.pill_rect()
-        x = e.position().x()
-        if x < r.left() + 36:
-            self.cancel_clicked.emit()
-        elif x > r.right() - 36:
-            self.finish_clicked.emit()
+        if not (self.state == "idle" and self._hovered and r.width() > 200 and r.contains(x, y)):
+            return None
+        cx = r.center().x()
+        for name, dx in SLOTS.items():
+            if abs(x - (cx + dx)) <= 17:
+                return name
+        return None
+
+    def mouseMoveEvent(self, e):
+        s = self._slot_at(e.position().x(), e.position().y())
+        if s != self._hover_slot:
+            self._hover_slot = s
+            self.setCursor(Qt.PointingHandCursor if s else Qt.ArrowCursor)
+            self.update()
+
+    def mousePressEvent(self, e):
+        x, y = e.position().x(), e.position().y()
+        if self.state == "handsfree":
+            r = self.pill_rect()
+            if x < r.left() + 36:
+                self.cancel_clicked.emit()
+            elif x > r.right() - 36:
+                self.finish_clicked.emit()
+            return
+        s = self._slot_at(x, y)
+        if s == "settings":
+            self.open_window.emit("settings")
+        elif s == "record":
+            self.start_handsfree.emit()
+        elif s in ("open", "logo"):
+            self.open_window.emit("home")
+        elif s == "copy":
+            self.copy_last.emit()
 
     # ------------------------------------------------------------ Zeichnen
     def paintEvent(self, e):
@@ -199,6 +273,15 @@ class Pill(QWidget):
         rad = r.height() / 2
         idle = self.state == "idle" and not self._hovered
         loading = self.state == "loading"
+        if self.state == "idle" and (self._hovered or r.width() > 60):
+            self._paint_menu(p, r)
+            p.end()
+            return
+        if idle:
+            # fast unsichtbare Fläche um die Mini-Pille: fängt die Maus ab (Alpha 0 wäre "Luft")
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 1))
+            p.drawRoundedRect(r.adjusted(-24, -12, 24, 6), 10, 10)
 
         # weicher Schatten: mehrere transparente Lagen statt teurem Blur-Effekt
         if not idle and not loading:
@@ -231,6 +314,43 @@ class Pill(QWidget):
         elif self.state == "error" and r.width() > 120:
             self._text(p, r, self.message, 11, white)
         p.end()
+
+    def _paint_menu(self, p, r):
+        """Aufgeklappte Pille wie bei NoTime: ⚙  ●  Logo  ⤢  ⧉"""
+        c = self.colors
+        for i in range(6, 0, -1):                      # weicher Schatten
+            sr = r.adjusted(-i, -i + 2, i, i + 2)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 9))
+            p.drawRoundedRect(sr, sr.height() / 2, sr.height() / 2)
+        p.setBrush(QColor(c["pill"]))
+        p.setPen(QPen(QColor(c["line"]), 1))
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        if r.width() < 200:            # während der Animation nur die Form zeigen
+            return
+        cx, cy = r.center().x(), r.center().y()
+        f = QFont(self.icon_family, 12)
+        # Graustufen-Glättung: Subpixel (ClearType) erzeugt auf transparenten Fenstern Farbsäume
+        f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
+        p.setFont(f)
+        for name, dx in SLOTS.items():
+            x = cx + dx
+            if name == self._hover_slot:
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(c["hover"]))
+                p.drawEllipse(QPointF(x, cy), 17, 17)
+            if name == "logo":
+                pm = self._logo_pixmap()
+                p.drawPixmap(QPointF(x - 14, cy - 14), pm)
+                continue
+            glyph = GLYPHS[name]
+            color = QColor(c["pill_fg"])
+            if name == "record":
+                color = QColor("#FF453A")
+            if name == "copy" and time.monotonic() < self._copied_until:
+                glyph = ""
+            p.setPen(color)
+            p.drawText(QRectF(x - 17, cy - 17, 34, 34), Qt.AlignCenter, glyph)
 
     def _text(self, p, r, s, size, color):
         f = QFont("Segoe UI", size)

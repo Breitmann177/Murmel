@@ -23,6 +23,7 @@ GROUPS = {
     "win": {VK_LWIN, VK_RWIN},
     "alt": {0x12, 0xA4, 0xA5},
     "shift": {0x10, 0xA0, 0xA1},
+    "rctrl": {0xA3},
 }
 
 
