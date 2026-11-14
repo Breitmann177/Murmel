@@ -1,0 +1,8 @@
+faster-whisper>=1.2
+sounddevice>=0.5
+numpy>=2.0
+PySide6-Essentials>=6.8
+psutil>=6.0
+# Für die GPU (erst wenn die RTX 5070 aktiv ist):
+# nvidia-cublas-cu12
+# nvidia-cudnn-cu12
