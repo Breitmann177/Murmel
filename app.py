@@ -18,14 +18,16 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 import cleanup
 import config
 import inject
+import llm
 import sounds
 import storage
+import styles
 import theme
 from audio import SR, Mic
 from hotkeys import PushToTalkHook
 from stt import STT
 from ui.widget import Pill
-from winutil import process_name, user32
+from winutil import process_name, user32, window_title
 
 log = logging.getLogger("murmel")
 
@@ -79,6 +81,8 @@ class Controller(QObject):
         self.hook = None
         self._start_hook()
         threading.Thread(target=self._load, daemon=True, name="loader").start()
+        if not self.cfg.get("onboarded"):
+            QTimer.singleShot(500, self.show_onboarding)
 
     # --------------------------------------------------------------- Setup
     def _start_mic(self):
@@ -91,7 +95,9 @@ class Controller(QObject):
     def _start_hook(self):
         if self.hook:
             self.hook.stop()
-        self.hook = PushToTalkHook(self.cfg["hotkey"], self.bridge.hotkey.emit)
+        # Command Mode nur, wenn Ollama installiert ist – sonst bleibt Strg+Win+Alt frei
+        command = self.cfg.get("command_hotkey") if llm.installed() else None
+        self.hook = PushToTalkHook(self.cfg["hotkey"], self.bridge.hotkey.emit, command=command)
         self.hook.start()
         names = {"ctrl": "Strg", "win": "Win", "alt": "Alt", "shift": "Shift", "rctrl": "Rechte Strg"}
         self.pill.hint = " + ".join(names[k] for k in self.cfg["hotkey"])
@@ -158,7 +164,19 @@ class Controller(QObject):
         if self.window:
             self.window.apply_theme()
 
+    def show_onboarding(self):
+        from ui.onboarding import Onboarding
+        self.onboarding = Onboarding(self)
+        self.onboarding.setWindowIcon(self.tray.icon())
+        self.onboarding.finished.connect(lambda: self.change_setting("onboarded", True))
+        self.onboarding.show()
+        self.onboarding.raise_()
+        self.onboarding.activateWindow()
+
     def change_setting(self, key, value):
+        if key == "show_onboarding":
+            self.show_onboarding()
+            return
         if self.cfg.get(key) == value:
             return
         self.cfg[key] = value
@@ -215,8 +233,14 @@ class Controller(QObject):
                 return
             handsfree = now - self.last_tap < self.cfg["double_tap_s"]
             self._begin(user32.GetForegroundWindow(), handsfree)
+        elif ev in ("command_press", "upgrade"):
+            if ev == "command_press" and self.state == "idle" and self.ready:
+                self._begin(user32.GetForegroundWindow(), False)
+            if self.state == "recording":
+                self.state = "command"            # gleiche Aufnahme, wird jetzt eine Anweisung
+                self.pill.set_state("command")
         elif ev == "release":
-            if self.state != "recording":
+            if self.state not in ("recording", "command"):
                 return
             if now - self.t_press < self.cfg["min_press_s"]:
                 self.last_tap = now               # Versehen – oder erster Tipp eines Doppeltipps
@@ -224,10 +248,10 @@ class Controller(QObject):
                 return
             self.finish()
         elif ev == "other":
-            if self.state == "recording":         # z. B. Strg+Win+D (Windows-Kürzel)
+            if self.state in ("recording", "command"):   # z. B. Strg+Win+D (Windows-Kürzel)
                 self._reset("idle", sound=False)
         elif ev == "esc":
-            if self.state in ("recording", "handsfree"):
+            if self.state in ("recording", "handsfree", "command"):
                 self.cancel()
 
     def _begin(self, target, handsfree):
@@ -265,12 +289,13 @@ class Controller(QObject):
         self.pill.set_state(pill_state)
 
     def cancel(self):
-        if self.state in ("recording", "handsfree"):
+        if self.state in ("recording", "handsfree", "command"):
             self._reset("idle")
 
     def finish(self):
-        if self.state not in ("recording", "handsfree"):
+        if self.state not in ("recording", "handsfree", "command"):
             return
+        mode = "command" if self.state == "command" else "dictate"
         audio = self.mic.end()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -278,18 +303,68 @@ class Controller(QObject):
         self.pill.set_state("processing")
         sounds.play("stop", self.cfg.get("sounds", True))
         t_release = time.perf_counter()
-        threading.Thread(target=self._process, args=(audio, self.target, t_release),
+        fn = self._process_command if mode == "command" else self._process
+        threading.Thread(target=fn, args=(audio, self.target, t_release),
                          daemon=True, name="worker").start()
 
     # ------------------------------------------------------------ Verarbeiten
+    def _shape_text(self, raw, lang, target):
+        """Rohtext -> fertiger Text: Snippet? Regeln + Wörterbuch, optional Ollama, Stil der App."""
+        snippet = storage.match_snippet(raw)
+        if snippet:
+            return snippet, "snippet"
+        level = self.cfg.get("cleanup", "normal")
+        text = cleanup.clean(raw, lang, "normal" if level == "strong" else level, storage.replacements())
+        if level == "strong" and text and llm.ensure_running(wait=4):
+            model = llm.pick_model(self.cfg.get("ollama_model"))
+            if model:
+                text = llm.polish(text, model) or text
+        style = styles.style_for(process_name(target), window_title(target), self.cfg.get("app_styles", {}))
+        words = [d["word"] for d in storage.dictionary()]
+        return styles.apply(text, style, words), style
+
+    def _process_command(self, audio, target, t_release):
+        """Command Mode: Markierung holen -> Anweisung erkennen -> Ollama -> Markierung ersetzen."""
+        res = {"ok": False}
+        try:
+            selection = inject.copy_selection()
+            if not selection.strip():
+                res["error"] = "Erst Text markieren"
+                return
+            instruction, _lang, _ = self.stt.transcribe(audio)
+            if not instruction:
+                res["error"] = "Nichts verstanden"
+                return
+            if not llm.ensure_running():
+                res["error"] = "Ollama startet nicht"
+                return
+            model = llm.pick_model(self.cfg.get("ollama_model"))
+            if not model:
+                res["error"] = "Kein Ollama-Modell"
+                return
+            out = llm.command(selection, instruction, model)
+            if not out:
+                res["error"] = "Keine Antwort"
+                return
+            mode = inject.paste(out, target, self.cfg["paste_restore_ms"])
+            total = time.perf_counter() - t_release
+            log.info("Befehl %.2fs | %r", total, instruction)
+            storage.add_history(process_name(target), f"✨ {instruction}", out, _lang, len(audio) / SR, total)
+            res.update(ok=True, mode=mode, text=out, latency=total)
+        except Exception:  # noqa: BLE001
+            log.exception("Befehl")
+            res["error"] = "Befehl fehlgeschlagen"
+        finally:
+            self.bridge.result.emit(res)
+
     def _process(self, audio, target, t_release):
         res = {"ok": False}
         try:
             if len(audio) < SR * 0.25:
                 res["error"] = "Nichts verstanden"
                 return
-            raw, lang, t_stt = self.stt.transcribe(audio)
-            text = cleanup.clean(raw, lang, self.cfg.get("cleanup", "normal"))
+            raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
+            text, style = self._shape_text(raw, lang, target)
             if not text:
                 res["error"] = "Nichts verstanden"
                 return
@@ -299,9 +374,9 @@ class Controller(QObject):
                                 self.cfg["paste_restore_ms"])
             total = time.perf_counter() - t_release
             app = process_name(target)
-            log.info("Latenz %.2fs (Erkennung %.2fs, Einfügen %.2fs) | %.1fs Audio | %s | %s",
+            log.info("Latenz %.2fs (Erkennung %.2fs, Einfügen %.2fs) | %.1fs Audio | %s | %s | Stil %s",
                      total, t_stt, time.perf_counter() - t_paste - self.cfg["paste_restore_ms"] / 1000,
-                     len(audio) / SR, lang, app)
+                     len(audio) / SR, lang, app, style)
             storage.add_history(app, raw, text, lang, len(audio) / SR, total)
             res.update(ok=True, mode=mode, text=text, latency=total)
         except Exception:  # noqa: BLE001

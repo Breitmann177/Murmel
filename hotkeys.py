@@ -25,6 +25,8 @@ GROUPS = {
     "shift": {0x10, 0xA0, 0xA1},
     "rctrl": {0xA3},
 }
+WIN_VKS = GROUPS["win"]
+ALT_VKS = GROUPS["alt"]
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -43,21 +45,28 @@ kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 
 
 class PushToTalkHook(threading.Thread):
-    def __init__(self, combo, callback):
+    """combo = Diktat-Kürzel (z. B. ["ctrl","win"]); command = optionales Command-Mode-Kürzel
+    (z. B. ["ctrl","win","alt"]). Weil Strg+Win in Strg+Win+Alt steckt, startet Strg+Win erst das
+    Diktat; kommt Alt dazu, meldet der Hook "upgrade" und die Aufnahme wird zum Befehl."""
+
+    def __init__(self, combo, callback, command=None):
         super().__init__(daemon=True, name="kbd-hook")
-        self.groups = [GROUPS[g] for g in combo]
-        self.combo_vks = set().union(*self.groups)
+        self.combos = {"dictate": [GROUPS[g] for g in combo]}
+        if command:
+            self.combos["command"] = [GROUPS[g] for g in command]
+        self.vks = {n: set().union(*gs) for n, gs in self.combos.items()}
+        self.all_vks = set().union(*self.vks.values())
         self.callback = callback
         self.enabled = True
         self.swallow_esc = False       # nur während der Aufnahme schlucken wir Esc
         self._down = set()
-        self._active = False
-        self._mask_win = False
+        self._active = None            # None | "dictate" | "command"
+        self._mask = set()             # Win/Alt, deren Loslassen wir maskieren müssen
         self._tid = None
         self._proc = HOOKPROC(self._hook)   # Referenz halten, sonst räumt Python sie weg!
 
-    def _satisfied(self):
-        return all(self._down & g for g in self.groups)
+    def _satisfied(self, name):
+        return name in self.combos and all(self._down & g for g in self.combos[name])
 
     def _emit(self, ev):
         try:
@@ -78,26 +87,32 @@ class PushToTalkHook(threading.Thread):
                         if vk == VK_ESCAPE and self.swallow_esc:
                             self._emit("esc")
                             return 1                     # Esc nicht an die App weitergeben
-                        if not self._active and self._satisfied():
-                            self._active = True
-                            self._emit("press")
-                        elif self._active and vk not in self.combo_vks:
+                        if self._active is None:
+                            if self._satisfied("command"):
+                                self._active = "command"
+                                self._emit("command_press")
+                            elif self._satisfied("dictate"):
+                                self._active = "dictate"
+                                self._emit("press")
+                        elif self._active == "dictate" and self._satisfied("command"):
+                            self._active = "command"
+                            self._emit("upgrade")
+                        elif vk not in self.vks[self._active]:
                             self._emit("other")
                 elif w_param in (WM_KEYUP, WM_SYSKEYUP):
                     self._down.discard(vk)
-                    if self._active and vk in self.combo_vks:
-                        self._active = False
-                        self._mask_win = bool(self.combo_vks & {VK_LWIN, VK_RWIN})
+                    if self._active and vk in self.vks[self._active]:
+                        self._mask = self.vks[self._active] & (WIN_VKS | ALT_VKS)
+                        self._active = None
                         self._emit("release")
-                    if vk in (VK_LWIN, VK_RWIN) and self._mask_win:
-                        # Win losgelassen öffnet sonst das Startmenü (egal ob Win zuerst oder
-                        # zuletzt losgelassen wird). Trick wie bei AutoHotkey: echtes Win-Up
-                        # schlucken, dann "Maskentaste" + Win-Up selbst senden.
-                        self._mask_win = False
+                    if vk in self._mask:
+                        # Win/Alt losgelassen öffnet sonst Startmenü bzw. Menüleiste. Trick wie bei
+                        # AutoHotkey: echtes Up schlucken, "Maskentaste" + Up selbst senden.
+                        self._mask.discard(vk)
+                        self._mask -= (WIN_VKS if vk in WIN_VKS else ALT_VKS)
                         send_keys((VK_MASK, True), (VK_MASK, False), (vk, False))
                         return 1
         return user32.CallNextHookEx(None, n_code, w_param, l_param)
-
     def run(self):
         self._tid = kernel32.GetCurrentThreadId()
         hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc,

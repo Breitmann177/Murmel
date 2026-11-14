@@ -165,7 +165,8 @@ class MainWindow(QWidget):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
 
-        self.pages = {"home": self._home(), "history": self._history(), "settings": self._settings()}
+        self.pages = {"home": self._home(), "history": self._history(), "dictionary": self._dictionary(),
+                      "snippets": self._snippets(), "styles": self._styles(), "settings": self._settings()}
         for w in self.pages.values():
             self.stack.addWidget(self._scroll(w))
 
@@ -233,7 +234,8 @@ class MainWindow(QWidget):
         lay.addSpacing(26)
         self.nav = {}
         for key, text, ic in (("home", "Home", "house"), ("history", "Verlauf", "history"),
-                              ("settings", "Einstellungen", "settings")):
+                              ("dictionary", "Wörterbuch", "book-a"), ("snippets", "Snippets", "scissors"),
+                              ("styles", "Stile", "palette"), ("settings", "Einstellungen", "settings")):
             b = QPushButton("  " + text)
             b.setObjectName("nav")
             b.setCheckable(True)
@@ -286,10 +288,11 @@ class MainWindow(QWidget):
         self.refresh()
 
     def refresh(self):
-        if self.current == "home":
-            self._refresh_home()
-        elif self.current == "history":
-            self._refresh_history()
+        fn = {"home": self._refresh_home, "history": self._refresh_history,
+              "dictionary": self._refresh_dictionary, "snippets": self._refresh_snippets,
+              "styles": self._refresh_styles, "settings": self._refresh_settings}.get(self.current)
+        if fn:
+            fn()
 
     # ------------------------------------------------------------------ Home
     def _page(self):
@@ -385,7 +388,8 @@ class MainWindow(QWidget):
             txt.addWidget(raw)
         lay.addLayout(txt, 1)
         for ic, tip, fn in (("copy", "Kopieren", lambda: self._copy(r["clean"])),) + (
-                (("search", "Rohtext zeigen", lambda: raw.setVisible(not raw.isVisible())),
+                (("book-a", "Zum Wörterbuch hinzufügen", lambda: self._add_word_from(body)),
+                 ("search", "Rohtext zeigen", lambda: raw.setVisible(not raw.isVisible())),
                  ("trash-2", "Löschen", lambda: self._delete(r["id"]))) if not compact else ()):
             b = QToolButton()
             b.setObjectName("iconbtn")
@@ -444,6 +448,229 @@ class MainWindow(QWidget):
                 == QMessageBox.Yes:
             storage.delete_history()
             self.refresh()
+
+    # ---------------------------------------------------- Listen-Hilfsbausteine
+    def _list_page(self, title, intro):
+        w, lay = self._page()
+        lay.addWidget(label(title, "h2"))
+        lay.addSpacing(6)
+        lay.addWidget(label(intro, "sub", wrap=True))
+        lay.addSpacing(22)
+        return w, lay
+
+    def _form_card(self, lay, fields, button_text, on_add):
+        c = card()
+        cl = QHBoxLayout(c)
+        cl.setContentsMargins(16, 14, 16, 14)
+        cl.setSpacing(10)
+        for f in fields:
+            cl.addWidget(f, f.property("stretch") or 1)
+        b = QPushButton(button_text)
+        b.setObjectName("primary")
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(on_add)
+        cl.addWidget(b)
+        for f in fields:
+            if isinstance(f, QLineEdit):
+                f.returnPressed.connect(on_add)
+        lay.addWidget(c)
+        lay.addSpacing(18)
+
+    def _simple_rows(self, box, rows, empty_text):
+        """rows: Liste von (Titel, Untertitel, Lösch-Callback)."""
+        while box.count():
+            it = box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        if not rows:
+            e = label(empty_text, "muted", wrap=True)
+            e.setContentsMargins(4, 6, 0, 6)
+            box.addWidget(e)
+            return
+        for title, sub, on_del in rows:
+            f = QFrame()
+            f.setObjectName("histrow")
+            fl = QHBoxLayout(f)
+            fl.setContentsMargins(18, 12, 10, 12)
+            tl = QVBoxLayout()
+            tl.setSpacing(2)
+            t = label(title, None, wrap=True)
+            t.setStyleSheet("font-size: 14px; font-weight: 600;")
+            tl.addWidget(t)
+            if sub:
+                tl.addWidget(label(sub, "muted", wrap=True))
+            fl.addLayout(tl, 1)
+            b = QToolButton()
+            b.setObjectName("iconbtn")
+            b.setIcon(theme.icon("trash-2", self.t["muted"], 16))
+            b.setToolTip("Löschen")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(on_del)
+            fl.addWidget(b, 0, Qt.AlignTop)
+            box.addWidget(f)
+
+    # -------------------------------------------------------------- Wörterbuch
+    def _dictionary(self):
+        w, lay = self._list_page("Wörterbuch", "Namen und Fachwörter, die Murmel richtig schreiben soll. "
+                                 "Optional: wie es oft falsch erkannt wird – das wird dann automatisch ersetzt.")
+        self.dict_word = QLineEdit()
+        self.dict_word.setPlaceholderText("Richtig, z. B. ein Name")
+        self.dict_heard = QLineEdit()
+        self.dict_heard.setPlaceholderText("Wird erkannt als … (optional)")
+        self._form_card(lay, [self.dict_word, self.dict_heard], "Hinzufügen", self._add_word)
+        self.dict_box = QVBoxLayout()
+        self.dict_box.setSpacing(10)
+        lay.addLayout(self.dict_box)
+        lay.addStretch()
+        return w
+
+    def _add_word(self):
+        word = self.dict_word.text().strip()
+        if not word:
+            return
+        storage.add_dictionary(word, self.dict_heard.text().strip())
+        self.dict_word.clear()
+        self.dict_heard.clear()
+        self.dict_word.setFocus()
+        self._refresh_dictionary()
+
+    def _add_word_from(self, body_label):
+        sel = body_label.selectedText().strip()
+        self.show_page("dictionary")
+        self.dict_word.setText(sel)
+        self.dict_word.setFocus()
+
+    def _refresh_dictionary(self):
+        rows = [(r["word"], f"wird ersetzt, wenn erkannt als „{r['replacement']}“" if r["replacement"] else
+                 "hilft der Erkennung", lambda _=False, i=r["id"]: (storage.delete_dictionary(i),
+                                                                   self._refresh_dictionary()))
+                for r in storage.dictionary()]
+        self._simple_rows(self.dict_box, rows, "Noch leer. Tipp: Im Verlauf ein Wort markieren und "
+                                               "auf das Buch-Symbol klicken.")
+
+    # ---------------------------------------------------------------- Snippets
+    def _snippets(self):
+        w, lay = self._list_page("Snippets", "Sag nur das Kürzel – Murmel fügt den ganzen Text ein. "
+                                 "Greift nur, wenn das Kürzel die komplette Aufnahme ist.")
+        self.snip_trigger = QLineEdit()
+        self.snip_trigger.setPlaceholderText("Kürzel, z. B. meine Signatur")
+        self.snip_trigger.setProperty("stretch", 1)
+        self.snip_text = QPlainTextEdit()
+        self.snip_text.setPlaceholderText("Text, der eingefügt wird …")
+        self.snip_text.setFixedHeight(64)
+        self.snip_text.setProperty("stretch", 2)
+        self._form_card(lay, [self.snip_trigger, self.snip_text], "Hinzufügen", self._add_snippet)
+        self.snip_box = QVBoxLayout()
+        self.snip_box.setSpacing(10)
+        lay.addLayout(self.snip_box)
+        lay.addStretch()
+        return w
+
+    def _add_snippet(self):
+        trig, text = self.snip_trigger.text().strip(), self.snip_text.toPlainText().strip()
+        if not trig or not text:
+            return
+        storage.add_snippet(trig, text)
+        self.snip_trigger.clear()
+        self.snip_text.clear()
+        self._refresh_snippets()
+
+    def _refresh_snippets(self):
+        rows = [(f"„{r['trigger']}“", r["text"][:160] + ("…" if len(r["text"]) > 160 else ""),
+                 lambda _=False, i=r["id"]: (storage.delete_snippet(i), self._refresh_snippets()))
+                for r in storage.snippets()]
+        self._simple_rows(self.snip_box, rows, "Noch keine Snippets. Beispiel: Kürzel „meine Adresse“ → "
+                                               "deine komplette Anschrift.")
+
+    # ------------------------------------------------------------------- Stile
+    def _styles(self):
+        import styles
+        w, lay = self._list_page("Stile", "Murmel passt den Text an die App an, in die du diktierst.")
+        legend = card()
+        ll = QVBoxLayout(legend)
+        ll.setContentsMargins(22, 6, 22, 6)
+        for i, (k, desc) in enumerate((("Formell", "Mail & Dokumente – sauberes Satzende."),
+                                      ("Locker", "Chats – kein Punkt am Ende kurzer Nachrichten."),
+                                      ("Code", "Editor & Terminal – keine Großschreibung am Anfang."),
+                                      ("Standard", "Alles andere – so wie gesprochen."))):
+            r = QFrame()
+            r.setObjectName("row" if i < 3 else "")
+            rl = QHBoxLayout(r)
+            rl.setContentsMargins(0, 11, 0, 11)
+            name = label(k)
+            name.setFixedWidth(110)
+            name.setStyleSheet("font-weight: 600;")
+            rl.addWidget(name)
+            rl.addWidget(label(desc, "muted"), 1)
+            ll.addWidget(r)
+        lay.addWidget(legend)
+        lay.addSpacing(26)
+        lay.addWidget(label("DEINE APPS", "section"))
+        lay.addSpacing(10)
+        self.style_card = card()
+        self.style_box = QVBoxLayout(self.style_card)
+        self.style_box.setContentsMargins(22, 4, 22, 4)
+        self.style_box.setSpacing(0)
+        lay.addWidget(self.style_card)
+        lay.addSpacing(14)
+        add = QHBoxLayout()
+        self.style_new = QLineEdit()
+        self.style_new.setPlaceholderText("Weitere App, z. B. notion.exe")
+        self.style_new.setFixedWidth(280)
+        self.style_new.returnPressed.connect(self._add_style_app)
+        add.addWidget(self.style_new)
+        b = QPushButton("Hinzufügen")
+        b.setObjectName("ghost")
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(self._add_style_app)
+        add.addWidget(b)
+        add.addStretch()
+        lay.addLayout(add)
+        lay.addStretch()
+        self._styles_mod = styles
+        return w
+
+    def _add_style_app(self):
+        name = self.style_new.text().strip().lower().removesuffix(".exe")
+        if not name:
+            return
+        ov = dict(self.cfg.get("app_styles", {}))
+        ov.setdefault(name, "standard")
+        self.setting_changed.emit("app_styles", ov)
+        self.style_new.clear()
+        self._refresh_styles()
+
+    def _refresh_styles(self):
+        st = self._styles_mod
+        while self.style_box.count():
+            it = self.style_box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        ov = self.cfg.get("app_styles", {})
+        apps = []
+        for a in storage.recent_apps(12) + list(ov):
+            k = st.app_key(a)
+            if k and k not in apps:
+                apps.append(k)
+        for k in ("outlook", "winword", "discord", "whatsapp", "code"):
+            if k not in apps:
+                apps.append(k)
+        for i, k in enumerate(apps):
+            r = QFrame()
+            r.setObjectName("row" if i < len(apps) - 1 else "")
+            rl = QHBoxLayout(r)
+            rl.setContentsMargins(0, 10, 0, 10)
+            rl.addWidget(label(pretty_app(k)), 1)
+            cur = st.style_for(k, "", ov)
+            seg = Segmented([(s, n) for s, n in st.STYLES.items()], cur)
+            seg.changed.connect(lambda v, key=k: self._set_style(key, v))
+            rl.addWidget(seg)
+            self.style_box.addWidget(r)
+
+    def _set_style(self, key, value):
+        ov = dict(self.cfg.get("app_styles", {}))
+        ov[key] = value
+        self.setting_changed.emit("app_styles", ov)
 
     # ----------------------------------------------------------- Einstellungen
     def _setting_row(self, box, title, hint, widget, last=False):
@@ -507,10 +734,15 @@ class MainWindow(QWidget):
         lang = Segmented([("auto", "Auto (DE/EN)"), ("de", "Deutsch"), ("en", "Englisch")], c.get("language", "auto"))
         lang.changed.connect(lambda v: self.setting_changed.emit("language", v))
         self._setting_row(g, "Sprache", None, lang)
+        import llm
+        has_ollama = llm.installed()
         edit = Segmented([("off", "Aus"), ("normal", "Normal"), ("strong", "Stark")], c.get("cleanup", "normal"),
-                         disabled=("strong",), tips={"strong": "Braucht Ollama – kommt in Phase 3"})
+                         disabled=() if has_ollama else ("strong",),
+                         tips={"strong": "Regeln + lokale KI (Ollama) glättet die Sätze" if has_ollama
+                               else "Braucht Ollama (ollama.com) – ist nicht installiert"})
         edit.changed.connect(lambda v: self.setting_changed.emit("cleanup", v))
-        self._setting_row(g, "Auto-Edit", "Füllwörter, Selbstkorrekturen, „neue Zeile“, Listen.", edit)
+        self._setting_row(g, "Auto-Edit", "Füllwörter, Selbstkorrekturen, „neue Zeile“, Listen. "
+                                          "Stark = zusätzlich lokale KI (langsamer).", edit)
         self.engine_label = label("", "chip")
         self._setting_row(g, "Erkennung", "", self.engine_label, last=True)
 
@@ -525,9 +757,57 @@ class MainWindow(QWidget):
         self._setting_row(g, "Sounds", "Leiser Ton beim Start und Ende der Aufnahme.", snd)
         th = Segmented([("light", "Hell"), ("dark", "Dunkel"), ("system", "System")], c.get("theme", "system"))
         th.changed.connect(lambda v: self.setting_changed.emit("theme", v))
-        self._setting_row(g, "Design", None, th, last=True)
+        self._setting_row(g, "Design", None, th)
+        intro = QPushButton("Einführung zeigen")
+        intro.setObjectName("ghost")
+        intro.setCursor(Qt.PointingHandCursor)
+        intro.clicked.connect(lambda: self.setting_changed.emit("show_onboarding", time.time()))
+        self._setting_row(g, "Einführung", "Die 5 Schritte vom ersten Start noch mal.", intro, last=True)
+
+        g = self._group(lay, "Lokale KI (Ollama)")
+        self.ollama_chip = label("prüfe …", "chip")
+        self._setting_row(g, "Status", "Nur auf diesem Rechner (localhost). Ohne Ollama geht alles außer "
+                                       "„Stark“ und dem Command Mode.", self.ollama_chip)
+        self.ollama_combo = QComboBox()
+        self.ollama_combo.currentIndexChanged.connect(self._ollama_model_changed)
+        self._setting_row(g, "Modell", None, self.ollama_combo)
+        self._setting_row(g, "Command Mode", "Text markieren, Strg + Win + Alt halten, Anweisung sprechen "
+                                             "(„mach das formeller“, „übersetz ins Englische“).",
+                          label("Strg + Win + Alt", "chip"), last=True)
         lay.addStretch()
         return w
+
+    def _refresh_settings(self):
+        """Ollama-Status im Hintergrund prüfen (HTTP darf das UI nicht blockieren)."""
+        import threading
+        import llm
+
+        def work():
+            st = llm.status()
+            self._ollama_status = st
+            QTimer.singleShot(0, self, self._show_ollama)    # zurück in den UI-Thread
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_ollama(self):
+        st = getattr(self, "_ollama_status", {})
+        if not st.get("installed"):
+            self.ollama_chip.setText("nicht installiert")
+        elif not st.get("running"):
+            self.ollama_chip.setText("installiert · startet bei Bedarf")
+        else:
+            self.ollama_chip.setText(f"läuft · {len(st['models'])} Modelle")
+        self.ollama_combo.blockSignals(True)
+        self.ollama_combo.clear()
+        self.ollama_combo.addItem("Automatisch", None)
+        for m in st.get("models", []):
+            self.ollama_combo.addItem(m, m)
+        cur = self.ollama_combo.findData(self.cfg.get("ollama_model"))
+        self.ollama_combo.setCurrentIndex(max(0, cur))
+        self.ollama_combo.setEnabled(bool(st.get("models")))
+        self.ollama_combo.blockSignals(False)
+
+    def _ollama_model_changed(self, _):
+        self.setting_changed.emit("ollama_model", self.ollama_combo.currentData())
 
     def set_engine(self, text, gpu: bool):
         self.engine_label.setText(text)

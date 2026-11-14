@@ -75,3 +75,12 @@ def process_name(hwnd) -> str:
         return psutil.Process(pid.value).name()
     except Exception:
         return ""
+
+
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+
+def window_title(hwnd) -> str:
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value

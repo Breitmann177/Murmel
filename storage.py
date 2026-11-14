@@ -99,3 +99,74 @@ def stats():
         d -= timedelta(days=1)
     return {"today": words_since(start_today), "week": words_since(start_week),
             "total": total_words, "wpm": wpm, "saved_min": saved_min, "streak": streak}
+
+
+# ------------------------------------------------------------------ Wörterbuch
+# word = richtige Schreibweise; replacement = wie Whisper es oft falsch schreibt (optional)
+def dictionary():
+    return [dict(r) for r in db().execute("SELECT * FROM dictionary ORDER BY word COLLATE NOCASE")]
+
+
+def add_dictionary(word, heard=""):
+    con = db()
+    con.execute("INSERT INTO dictionary(word, replacement) VALUES (?, ?)", (word.strip(), heard.strip()))
+    con.commit()
+
+
+def delete_dictionary(entry_id):
+    con = db()
+    con.execute("DELETE FROM dictionary WHERE id=?", (entry_id,))
+    con.commit()
+
+
+def hotwords(limit_chars=220):
+    """Wörter für Whisper ('hotwords'): erhöht die Chance, dass Namen richtig geschrieben werden.
+    Begrenzt, weil Whisper nur ~220 Token Kontext für so etwas hat."""
+    out, n = [], 0
+    for r in dictionary():
+        w = r["word"]
+        if n + len(w) + 2 > limit_chars:
+            break
+        out.append(w)
+        n += len(w) + 2
+    return ", ".join(out)
+
+
+def replacements():
+    return {r["replacement"]: r["word"] for r in dictionary() if r["replacement"]}
+
+
+# -------------------------------------------------------------------- Snippets
+def snippets():
+    return [dict(r) for r in db().execute("SELECT * FROM snippets ORDER BY trigger COLLATE NOCASE")]
+
+
+def add_snippet(trigger, text):
+    con = db()
+    con.execute("INSERT INTO snippets(trigger, text) VALUES (?, ?)", (trigger.strip(), text))
+    con.commit()
+
+
+def delete_snippet(entry_id):
+    con = db()
+    con.execute("DELETE FROM snippets WHERE id=?", (entry_id,))
+    con.commit()
+
+
+def _norm(s):
+    import re
+    return re.sub(r"[^\w]+", " ", s.lower()).strip()
+
+
+def match_snippet(spoken):
+    """Greift nur, wenn das Kürzel die GANZE Aufnahme ist ("meine Signatur." == "meine signatur")."""
+    n = _norm(spoken)
+    for r in snippets():
+        if _norm(r["trigger"]) == n:
+            return r["text"]
+    return None
+
+
+def recent_apps(limit=12):
+    return [r[0] for r in db().execute(
+        "SELECT app FROM history WHERE app != '' GROUP BY app ORDER BY MAX(ts) DESC LIMIT ?", (limit,))]

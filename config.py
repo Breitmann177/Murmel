@@ -23,6 +23,10 @@ DEFAULTS = {
     "name": "",                         # für "Guten Morgen, …"
     "sounds": True,
     "theme": "system",                  # light | dark | system
+    "command_hotkey": ["ctrl", "win", "alt"],   # Command Mode (braucht Ollama)
+    "ollama_model": None,               # None = automatisch wählen
+    "app_styles": {},                   # eigene Zuordnung App -> Stil
+    "onboarded": False,
 }
 
 

@@ -28,6 +28,7 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "hover": (242, 46),          # aufgeklappt wie NoTime: Knöpfe + Logo
     "recording": (164, 40),
     "handsfree": (232, 40),
+    "command": (184, 40),        # Command Mode: andere Farbe + ✨
     "processing": (164, 40),
     "done": (164, 40),
     "error": (240, 40),
@@ -158,13 +159,13 @@ class Pill(QWidget):
         self.state = state
         self.message = message
         self._back.stop()
-        if state in ("recording", "handsfree"):
+        if state in ("recording", "handsfree", "command"):
             self._rec_t0 = time.monotonic() if state == "recording" or not self._rec_t0 else self._rec_t0
         key = "hover" if state == "idle" and self._hovered else state
         w, h = SIZES[key]
         if state == "error" and message:
             w = max(160, min(300, 56 + len(message) * 7))
-        self._animate_to(w, h, bounce=state in ("recording", "handsfree", "hover"))
+        self._animate_to(w, h, bounce=state in ("recording", "handsfree", "command", "hover"))
         if hold_ms:
             self._back.start(hold_ms)
         self._ensure_timer()
@@ -194,7 +195,7 @@ class Pill(QWidget):
             self._tick.stop()
 
     def _on_tick(self):
-        if self.state in ("recording", "handsfree"):
+        if self.state in ("recording", "handsfree", "command"):
             self._update_bars()
         self.update()
         self._maybe_stop_timer()
@@ -303,6 +304,13 @@ class Pill(QWidget):
             self._paint_loading(p, r)
         elif self.state == "idle" and self._hovered and r.width() > 110:
             self._text(p, r, self.hint, 11, QColor(255, 255, 255, 210))
+        elif self.state == "command":
+            self._paint_bars(p, r, QColor("#D8CAF7"))
+            f = QFont(self.icon_family, 11)
+            f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
+            p.setFont(f)
+            p.setPen(QColor("#D8CAF7"))
+            p.drawText(QRectF(r.left() + 8, r.top(), 26, r.height()), Qt.AlignCenter, "\uE945")  # Sparkle
         elif self.state in ("recording", "handsfree"):
             self._paint_bars(p, r)
             if self.state == "handsfree" and r.width() > 200:
@@ -359,9 +367,9 @@ class Pill(QWidget):
         p.setPen(color)
         p.drawText(r, Qt.AlignCenter, s)
 
-    def _paint_bars(self, p, r):
+    def _paint_bars(self, p, r, color=None):
         n = BARS
-        hf = self.state == "handsfree"
+        hf = self.state in ("handsfree", "command")
         area_w = 96 if hf else min(r.width() - 36, 110)
         gap = area_w / n
         bw = max(2.0, gap * 0.45)
@@ -369,7 +377,7 @@ class Pill(QWidget):
         x0 = cx - area_w / 2 + gap / 2
         max_h = r.height() - 14
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(255, 255, 255, 235))
+        p.setBrush(color or QColor(255, 255, 255, 235))
         for i, v in enumerate(self._bars):
             h = max(3.0, v * max_h)
             p.drawRoundedRect(QRectF(x0 + i * gap - bw / 2, cy - h / 2, bw, h), bw / 2, bw / 2)

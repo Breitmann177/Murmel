@@ -147,3 +147,38 @@ def paste(text: str, target_hwnd, restore_ms=220) -> str:
     time.sleep(restore_ms / 1000)
     restore_clipboard(saved)
     return "pasted"
+
+
+def get_text():
+    if not _open_clipboard():
+        return ""
+    try:
+        h = user32.GetClipboardData(CF_UNICODETEXT)
+        if not h:
+            return ""
+        p = kernel32.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(p) if p else ""
+        finally:
+            kernel32.GlobalUnlock(h)
+    finally:
+        user32.CloseClipboard()
+
+
+def copy_selection(timeout=0.5) -> str:
+    """Markierten Text der Vordergrund-App holen (für den Command Mode): Zwischenablage sichern
+    und leeren, Strg+C senden, kurz auf den Text warten, Zwischenablage zurücklegen."""
+    saved = save_clipboard()
+    if _open_clipboard():
+        user32.EmptyClipboard()
+        user32.CloseClipboard()
+    _wait_modifiers_released()
+    send_keys((VK_CONTROL, True), (0x43, True), (0x43, False), (VK_CONTROL, False))
+    text, t_end = "", time.monotonic() + timeout
+    while time.monotonic() < t_end:
+        time.sleep(0.03)
+        text = get_text()
+        if text:
+            break
+    restore_clipboard(saved)
+    return text

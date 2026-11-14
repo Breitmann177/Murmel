@@ -12,6 +12,24 @@ import numpy as np
 
 log = logging.getLogger("murmel.stt")
 
+
+def _setup_cuda_dlls():
+    """cuBLAS/cuDNN kommen als pip-Pakete (nvidia-*-cu12) mit. Windows findet deren DLLs nicht von
+    selbst – also die bin-Ordner in den Suchpfad hängen, BEVOR ctranslate2 sie lädt."""
+    try:
+        import site
+        for sp in site.getsitepackages():
+            for sub in ("cublas", "cudnn", "cuda_nvrtc"):
+                d = os.path.join(sp, "nvidia", sub, "bin")
+                if os.path.isdir(d):
+                    os.add_dll_directory(d)
+                    os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+    except Exception as e:  # noqa: BLE001
+        log.warning("CUDA-Pfade: %s", e)
+
+
+_setup_cuda_dlls()
+
 # Typische Whisper-Halluzinationen bei Stille (aus NoTime übernommen)
 HALLUCINATIONS = (
     "untertitel", "vielen dank fürs zuschauen", "vielen dank für's zuschauen",
