@@ -250,7 +250,7 @@ class MainWindow(QWidget):
         self.status.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.status, 0, Qt.AlignLeft)
         lay.addSpacing(6)
-        lay.addWidget(label("Strg + Win halten und sprechen", "muted", wrap=True))
+
         return sb
 
     def set_status(self, text):
@@ -308,7 +308,7 @@ class MainWindow(QWidget):
         self.greet = label("", "h1")
         lay.addWidget(self.greet)
         lay.addSpacing(6)
-        lay.addWidget(label("Halte Strg + Win, sprich, lass los – der Text landet dort, wo dein Cursor ist.", "sub"))
+
         lay.addSpacing(32)
         row = QHBoxLayout()
         row.setSpacing(16)
@@ -323,7 +323,7 @@ class MainWindow(QWidget):
         lay.addWidget(label("PROBIER'S AUS", "section"))
         lay.addSpacing(10)
         self.tryout = QPlainTextEdit()
-        self.tryout.setPlaceholderText("Klick hier rein, halte Strg + Win und sag etwas …")
+        self.tryout.setPlaceholderText("Klick hier rein und sag etwas …")
         self.tryout.setFixedHeight(96)
         lay.addWidget(self.tryout)
         lay.addSpacing(28)
@@ -359,7 +359,7 @@ class MainWindow(QWidget):
             if it.widget():
                 it.widget().deleteLater()
         if not rows:
-            e = label("Noch nichts diktiert. Halte Strg + Win und leg los.", "muted")
+            e = label("Noch nichts diktiert.", "muted")
             e.setContentsMargins(0, 14, 0, 14)
             box.addWidget(e)
             return
