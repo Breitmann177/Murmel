@@ -320,14 +320,6 @@ class MainWindow(QWidget):
         lay.addLayout(row)
         lay.addSpacing(28)
 
-        lay.addWidget(label("PROBIER'S AUS", "section"))
-        lay.addSpacing(10)
-        self.tryout = QPlainTextEdit()
-        self.tryout.setPlaceholderText("Klick hier rein und sag etwas …")
-        self.tryout.setFixedHeight(96)
-        lay.addWidget(self.tryout)
-        lay.addSpacing(28)
-
         lay.addWidget(label("ZULETZT", "section"))
         lay.addSpacing(10)
         self.recent_box = QVBoxLayout()

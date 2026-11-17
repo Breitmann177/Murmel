@@ -69,6 +69,7 @@ class Controller(QObject):
         b.partial.connect(lambda t: self.pill.set_preview(t) if self.state in ("recording", "handsfree") else None)
         self.pill.cancel_clicked.connect(self.cancel)
         self.pill.finish_clicked.connect(self.finish)
+        self.pill.pause_clicked.connect(self.toggle_pause)
         self.pill.open_window.connect(self.open_window)
         self.pill.start_handsfree.connect(self.start_handsfree)
         self.pill.copy_last.connect(self.copy_last)
@@ -342,6 +343,19 @@ class Controller(QObject):
         self.hf_timer.stop()
         self.state = "idle"
         self.pill.set_state(pill_state)
+
+    def toggle_pause(self):
+        """Freihand-Aufnahme kurz anhalten (z. B. Zwischenfrage), Mitte der Pille antippen."""
+        if self.state != "handsfree":
+            return
+        on = not self.mic.paused
+        self.mic.paused = on
+        self.pill.set_paused(on)
+        if on:
+            self.hf_timer.stop()          # die 6-Minuten-Grenze zählt in der Pause nicht
+        else:
+            left = self.cfg["handsfree_max_s"] - self.pill.elapsed()
+            self.hf_timer.start(int(max(1, left) * 1000))
 
     def cancel(self):
         if self.state in ("recording", "handsfree", "command"):

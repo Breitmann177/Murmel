@@ -54,6 +54,7 @@ class Mic:
         self._ring = deque()
         self._ring_len = 0
         self._chunks = None             # Liste während der Aufnahme, sonst None
+        self.paused = False             # Freihand-Pause: Ton wird verworfen, Aufnahme bleibt offen
         self._stream = None
         self.device_name = ""
 
@@ -76,7 +77,7 @@ class Mic:
                 self._ring_len += len(mono)
                 while self._ring_len - len(self._ring[0]) >= PRE_ROLL_S * SR:
                     self._ring_len -= len(self._ring.popleft())
-                if self._chunks is not None:
+                if self._chunks is not None and not self.paused:
                     self._chunks.append(mono)
 
         self._stream = sd.InputStream(device=self.device, channels=1, samplerate=sr,
@@ -84,6 +85,7 @@ class Mic:
         self._stream.start()
 
     def begin(self):
+        self.paused = False
         with self._lock:
             self._chunks = list(self._ring)   # Pre-Roll vorneweg
 

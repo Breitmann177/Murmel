@@ -26,7 +26,7 @@ BARS = 12
 SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "loading": (96, 10),
     "idle": (40, 8),
-    "hover": (242, 46),          # aufgeklappt wie NoTime: Knöpfe + Logo
+    "hover": (166, 46),          # aufgeklappt: Aufnahme · Logo · Einstellungen
     "recording": (164, 40),
     "handsfree": (232, 40),
     "command": (184, 40),        # Command Mode: andere Farbe + ✨
@@ -37,12 +37,13 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
 
 
 # Knöpfe im aufgeklappten Zustand: Abstand von der Mitte (wie bei NoTime)
-SLOTS = {"settings": -94, "record": -56, "logo": 0, "open": 56, "copy": 94}
-GLYPHS = {"settings": "\uE713", "record": "\uE7C8", "open": "\uE740", "copy": "\uE8C8"}
+SLOTS = {"record": -52, "logo": 0, "settings": 52}
+GLYPHS = {"settings": "\uE713", "record": "\uE7C8"}
 
 
 class Pill(QWidget):
     cancel_clicked = Signal()
+    pause_clicked = Signal()
     finish_clicked = Signal()
     open_window = Signal(str)        # "home" | "settings"
     start_handsfree = Signal()
@@ -165,6 +166,10 @@ class Pill(QWidget):
         self._back.stop()
         if state in ("recording", "handsfree", "command"):
             self._rec_t0 = time.monotonic() if state == "recording" or not self._rec_t0 else self._rec_t0
+        if state not in ("handsfree",):
+            self.paused, self._paused_total = False, 0.0
+        if state == "handsfree" and not self.paused:
+            self._rec_t0, self._paused_total = time.monotonic(), 0.0
         key = "hover" if state == "idle" and self._hovered else state
         w, h = SIZES[key]
         if state == "error" and message:
@@ -173,6 +178,23 @@ class Pill(QWidget):
         if hold_ms:
             self._back.start(hold_ms)
         self._ensure_timer()
+
+    # ------------------------------------------------------------ Pause
+    paused = False
+    _paused_at = 0.0
+    _paused_total = 0.0
+
+    def set_paused(self, on: bool):
+        if on and not self.paused:
+            self._paused_at = time.monotonic()
+        elif not on and self.paused:
+            self._paused_total += time.monotonic() - self._paused_at
+        self.paused = on
+        self.update()
+
+    def elapsed(self):
+        end = self._paused_at if self.paused else time.monotonic()
+        return max(0.0, end - self._rec_t0 - self._paused_total)
 
     def set_preview(self, text: str):
         """Live-Text über der Pille. Leerer Text = Blase weich ausblenden."""
@@ -248,7 +270,7 @@ class Pill(QWidget):
 
     def _slot_at(self, x, y):
         r = self.pill_rect()
-        if not (self.state == "idle" and self._hovered and r.width() > 200 and r.contains(x, y)):
+        if not (self.state == "idle" and self._hovered and r.width() > 150 and r.contains(x, y)):
             return None
         cx = r.center().x()
         for name, dx in SLOTS.items():
@@ -271,16 +293,16 @@ class Pill(QWidget):
                 self.cancel_clicked.emit()
             elif x > r.right() - 36:
                 self.finish_clicked.emit()
+            elif r.contains(x, y):
+                self.pause_clicked.emit()          # Mitte antippen = Pause / weiter
             return
         s = self._slot_at(x, y)
         if s == "settings":
             self.open_window.emit("settings")
         elif s == "record":
             self.start_handsfree.emit()
-        elif s in ("open", "logo"):
+        elif s == "logo":
             self.open_window.emit("home")
-        elif s == "copy":
-            self.copy_last.emit()
 
     # ------------------------------------------------------------ Zeichnen
     def paintEvent(self, e):
@@ -328,7 +350,10 @@ class Pill(QWidget):
             p.setPen(QColor("#D8CAF7"))
             p.drawText(QRectF(r.left() + 8, r.top(), 26, r.height()), Qt.AlignCenter, "\uE945")  # Sparkle
         elif self.state in ("recording", "handsfree"):
-            self._paint_bars(p, r)
+            if self.paused:
+                self._text(p, r.adjusted(24, 0, -24, 0), "Pausiert", 10, QColor(255, 255, 255, 170))
+            else:
+                self._paint_bars(p, r)
             if self.state == "handsfree" and r.width() > 200:
                 self._paint_handsfree(p, r)
         elif self.state == "processing":
@@ -383,7 +408,7 @@ class Pill(QWidget):
         p.setBrush(QColor(c["pill"]))
         p.setPen(QPen(QColor(c["line"]), 1))
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        if r.width() < 200:            # während der Animation nur die Form zeigen
+        if r.width() < 150:            # während der Animation nur die Form zeigen
             return
         cx, cy = r.center().x(), r.center().y()
         f = QFont(self.icon_family, 12)
@@ -449,7 +474,7 @@ class Pill(QWidget):
         path.lineTo(x + 5, cy - 4)
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
-        secs = int(time.monotonic() - self._rec_t0)
+        secs = int(self.elapsed())
         f = QFont("Segoe UI", 9)
         p.setFont(f)
         p.setPen(QColor(255, 255, 255, 150))
