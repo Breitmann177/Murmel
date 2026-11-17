@@ -55,6 +55,8 @@ class Controller(QObject):
         self.engine_text, self.engine_gpu = "lädt …", False
         self.ready = False
         self.stt_lock = threading.Lock()     # Vorschau und finaler Durchlauf nie gleichzeitig
+        self.preview_stt = None              # kleines Modell für die Live-Blase (nur GPU)
+        self.preview_lock = threading.Lock()
         self._preview_gen = 0
         self.state = "idle"          # idle | recording | handsfree | processing
         self.target = None
@@ -206,6 +208,7 @@ class Controller(QObject):
     def _load(self):
         try:
             self.stt.load()
+            self._load_preview_model()
             gpu = self.stt.device == "cuda"
             self.bridge.loaded.emit(f"{self.stt.model_name} · {'GPU' if gpu else 'CPU'}", gpu)
         except Exception:  # noqa: BLE001
@@ -295,23 +298,39 @@ class Controller(QObject):
     def _preview_loop(self, gen):
         last_len = 0
         hot = storage.hotwords() or None
+        model = self.preview_stt or self.stt
+        lock = self.preview_lock if self.preview_stt else self.stt_lock
         while self._preview_gen == gen:
-            time.sleep(0.4)
+            time.sleep(0.25 if self.preview_stt else 0.4)
             audio = self.mic.snapshot()
             # erst ab 0,7 s und nur, wenn seit dem letzten Mal genug Neues dazukam
-            if len(audio) < SR * 0.7 or len(audio) - last_len < SR * 0.35:
+            if len(audio) < SR * 0.5 or len(audio) - last_len < SR * 0.2:
                 continue
             last_len = len(audio)
             tail = audio[-25 * SR:]          # lange Freihand-Aufnahmen: nur das Ende zeigen
-            with self.stt_lock:
+            with lock:
                 if self._preview_gen != gen:
                     break
                 try:
-                    text, lang, _ = self.stt.transcribe(tail, hot)
+                    text, lang, _ = model.transcribe(tail, hot)
                 except Exception:  # noqa: BLE001
                     continue
             if self._preview_gen == gen and text:
                 self.bridge.partial.emit(cleanup.clean(text, lang, "normal"))
+
+    def _load_preview_model(self):
+        """Eigenes kleines Modell nur für die Vorschau-Blase (~4× schneller als das große).
+        Eingefügt wird weiterhin der Text vom großen Modell – die Vorschau ist nur zum Mitlesen.
+        Eigenes Modell + eigene Sperre: der finale Durchlauf muss nie auf die Vorschau warten."""
+        if self.stt.device != "cuda":
+            return
+        try:
+            p = STT({**self.cfg, "model_gpu": "small"})
+            p.load()
+            if p.device == "cuda":
+                self.preview_stt = p
+        except Exception as e:  # noqa: BLE001
+            log.warning("Vorschau-Modell: %s", e)
 
     def _warm_ollama(self):
         """Stark-Modus: Sprachmodell schon beim Drücken in den Grafikspeicher laden, damit die
