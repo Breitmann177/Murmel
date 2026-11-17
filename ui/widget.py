@@ -29,6 +29,7 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "hover": (166, 46),          # aufgeklappt: Aufnahme · Logo · Einstellungen
     "recording": (164, 40),
     "handsfree": (232, 40),
+    "mini": (56, 20),            # Freihand nach 3 s ohne Maus: klein, roter Punkt + Mini-Pegel
     "command": (184, 40),        # Command Mode: andere Farbe + ✨
     "processing": (164, 40),
     "done": (164, 40),
@@ -84,6 +85,12 @@ class Pill(QWidget):
         self._leave = QTimer(self, singleShot=True)
         self._leave.setInterval(380)
         self._leave.timeout.connect(self._collapse)
+
+        # Freihand-Aufnahme schrumpft nach 3 s ohne Maus auf eine Mini-Pille
+        self._mini = False
+        self._mini_timer = QTimer(self, singleShot=True)
+        self._mini_timer.setInterval(3000)
+        self._mini_timer.timeout.connect(self._go_mini)
 
         self._hover_slot = None
         self._bubble_text = ""
@@ -170,7 +177,13 @@ class Pill(QWidget):
             self.paused, self._paused_total = False, 0.0
         if state == "handsfree" and not self.paused:
             self._rec_t0, self._paused_total = time.monotonic(), 0.0
-        key = "hover" if state == "idle" and self._hovered else state
+        if state == "handsfree":
+            if not self._mini:
+                self._mini_timer.start()
+        else:
+            self._mini = False
+            self._mini_timer.stop()
+        key = "hover" if state == "idle" and self._hovered else ("mini" if state == "handsfree" and self._mini else state)
         w, h = SIZES[key]
         if state == "error" and message:
             w = max(160, min(300, 56 + len(message) * 7))
@@ -252,8 +265,22 @@ class Pill(QWidget):
             self._bars[i] = cur + (target - cur) * (0.55 if target > cur else 0.18)
 
     # -------------------------------------------------------------- Maus
+    def _go_mini(self):
+        if self.state == "handsfree" and not self._hovered:
+            self._mini = True
+            self._animate_to(*SIZES["mini"])
+            self._ensure_timer()
+
     def enterEvent(self, e):
         self._leave.stop()
+        if self.state == "handsfree":
+            self._mini_timer.stop()
+            self._hovered = True
+            if self._mini:                        # Maus drauf: wieder groß mit ✕ / Pause / ✓
+                self._mini = False
+                self._animate_to(*SIZES["handsfree"], bounce=True)
+                self._ensure_timer()
+            return
         if not self._hovered:
             self._hovered = True
             if self.state == "idle":
@@ -265,6 +292,8 @@ class Pill(QWidget):
     def _collapse(self):
         self._hovered = False
         self._hover_slot = None
+        if self.state == "handsfree":
+            self._mini_timer.start()
         if self.state == "idle":
             self.set_state("idle")
 
@@ -289,6 +318,8 @@ class Pill(QWidget):
         x, y = e.position().x(), e.position().y()
         if self.state == "handsfree":
             r = self.pill_rect()
+            if r.width() < 200:                    # Mini-Pille: erst aufklappen lassen, nichts auslösen
+                return
             if x < r.left() + 36:
                 self.cancel_clicked.emit()
             elif x > r.right() - 36:
@@ -349,6 +380,8 @@ class Pill(QWidget):
             p.setFont(f)
             p.setPen(QColor("#D8CAF7"))
             p.drawText(QRectF(r.left() + 8, r.top(), 26, r.height()), Qt.AlignCenter, "\uE945")  # Sparkle
+        elif self.state == "handsfree" and r.width() < 140:
+            self._paint_mini(p, r)
         elif self.state in ("recording", "handsfree"):
             if self.paused:
                 self._text(p, r.adjusted(24, 0, -24, 0), "Pausiert", 10, QColor(255, 255, 255, 170))
@@ -365,10 +398,28 @@ class Pill(QWidget):
         self._paint_bubble(p, r)
         p.end()
 
+    def _paint_mini(self, p, r):
+        """Dezente Aufnahme-Anzeige: pulsierender roter Punkt + 4 winzige Pegel-Balken."""
+        cy = r.center().y()
+        p.setPen(Qt.NoPen)
+        if self.paused:
+            p.setBrush(QColor(255, 255, 255, 110))
+        else:
+            pulse = (math.sin(time.monotonic() * math.tau / 1.6) + 1) / 2
+            p.setBrush(QColor(255, 69, 58, int(140 + 115 * pulse)))
+        p.drawEllipse(QPointF(r.left() + 13, cy), 3.6, 3.6)
+        p.setBrush(QColor(255, 255, 255, 110 if self.paused else 220))
+        x0 = r.left() + 25
+        for i, v in enumerate(self._bars[4:8]):
+            h = 2.5 if self.paused else max(2.5, v * (r.height() - 8))
+            p.drawRoundedRect(QRectF(x0 + i * 6, cy - h / 2, 2.6, h), 1.3, 1.3)
+
     def _paint_bubble(self, p, r):
         """Live-Text: dunkle Blase über der Pille, zeigt die letzten 3 Zeilen."""
         a = self._bubble_a
         if a < 0.02 or not self._bubble_text:
+            return
+        if self.state == "handsfree" and r.width() < 140:      # Mini-Modus: dezent, keine Blase
             return
         f = QFont("Inter", 11)
         f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
