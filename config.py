@@ -27,6 +27,8 @@ DEFAULTS = {
     "ollama_model": None,               # None = automatisch wählen
     "app_styles": {},                   # eigene Zuordnung App -> Stil
     "onboarded": False,
+    "live_preview": True,               # Text-Blase beim Sprechen (nur mit GPU)
+    "autostart": False,
 }
 
 

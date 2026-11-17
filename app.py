@@ -37,6 +37,7 @@ class Bridge(QObject):
     loaded = Signal(str, bool)
     load_failed = Signal(str)
     result = Signal(dict)
+    partial = Signal(str)        # Live-Vorschau
 
 
 class Controller(QObject):
@@ -53,6 +54,8 @@ class Controller(QObject):
         self.window = None
         self.engine_text, self.engine_gpu = "lädt …", False
         self.ready = False
+        self.stt_lock = threading.Lock()     # Vorschau und finaler Durchlauf nie gleichzeitig
+        self._preview_gen = 0
         self.state = "idle"          # idle | recording | handsfree | processing
         self.target = None
         self.t_press = 0.0
@@ -63,6 +66,7 @@ class Controller(QObject):
         b.loaded.connect(self.on_loaded)
         b.load_failed.connect(lambda m: self.pill.set_state("error", m, 6000))
         b.result.connect(self.on_result)
+        b.partial.connect(lambda t: self.pill.set_preview(t) if self.state in ("recording", "handsfree") else None)
         self.pill.cancel_clicked.connect(self.cancel)
         self.pill.finish_clicked.connect(self.finish)
         self.pill.open_window.connect(self.open_window)
@@ -268,6 +272,56 @@ class Controller(QObject):
         else:
             self.state = "recording"
             self.pill.set_state("recording")
+        self._start_preview()
+        if self.cfg.get("cleanup") == "strong":
+            threading.Thread(target=self._warm_ollama, daemon=True).start()
+
+    # ------------------------------------------------------------ Live-Vorschau
+    def _start_preview(self):
+        """Während du sprichst, wird die bisherige Aufnahme ~2× pro Sekunde erkannt und in einer
+        Blase über der Pille gezeigt. Das ist NUR eine Vorschau: Eingefügt wird am Ende der
+        saubere Durchlauf über die komplette Aufnahme. Auf der CPU wäre das zu langsam (~2 s pro
+        Durchlauf), deshalb nur mit GPU."""
+        self._preview_gen += 1
+        if self.cfg.get("live_preview", True) and self.stt.device == "cuda":
+            threading.Thread(target=self._preview_loop, args=(self._preview_gen,),
+                             daemon=True, name="preview").start()
+
+    def _stop_preview(self):
+        self._preview_gen += 1          # laufende Schleife merkt das und hört auf
+        self.pill.set_preview("")
+
+    def _preview_loop(self, gen):
+        last_len = 0
+        hot = storage.hotwords() or None
+        while self._preview_gen == gen:
+            time.sleep(0.4)
+            audio = self.mic.snapshot()
+            # erst ab 0,7 s und nur, wenn seit dem letzten Mal genug Neues dazukam
+            if len(audio) < SR * 0.7 or len(audio) - last_len < SR * 0.35:
+                continue
+            last_len = len(audio)
+            tail = audio[-25 * SR:]          # lange Freihand-Aufnahmen: nur das Ende zeigen
+            with self.stt_lock:
+                if self._preview_gen != gen:
+                    break
+                try:
+                    text, lang, _ = self.stt.transcribe(tail, hot)
+                except Exception:  # noqa: BLE001
+                    continue
+            if self._preview_gen == gen and text:
+                self.bridge.partial.emit(cleanup.clean(text, lang, "normal"))
+
+    def _warm_ollama(self):
+        """Stark-Modus: Sprachmodell schon beim Drücken in den Grafikspeicher laden, damit die
+        Glättung beim Loslassen sofort da ist (kalt dauert der erste Aufruf ~10 s)."""
+        try:
+            if llm.ensure_running(wait=5):
+                model = llm.pick_model(self.cfg.get("ollama_model"))
+                if model:
+                    llm.warm(model)
+        except Exception:  # noqa: BLE001
+            pass
 
     def start_handsfree(self):
         """Klick auf ● in der Pille. Die Pille aktiviert sich nie, also ist das Vordergrund-
@@ -282,6 +336,7 @@ class Controller(QObject):
             self.pill.mark_copied()
 
     def _reset(self, pill_state, sound=True):
+        self._stop_preview()
         self.mic.cancel()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -296,6 +351,7 @@ class Controller(QObject):
         if self.state not in ("recording", "handsfree", "command"):
             return
         mode = "command" if self.state == "command" else "dictate"
+        self._stop_preview()
         audio = self.mic.end()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -331,7 +387,8 @@ class Controller(QObject):
             if not selection.strip():
                 res["error"] = "Erst Text markieren"
                 return
-            instruction, _lang, _ = self.stt.transcribe(audio)
+            with self.stt_lock:
+                instruction, _lang, _ = self.stt.transcribe(audio)
             if not instruction:
                 res["error"] = "Nichts verstanden"
                 return
@@ -363,7 +420,8 @@ class Controller(QObject):
             if len(audio) < SR * 0.25:
                 res["error"] = "Nichts verstanden"
                 return
-            raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
+            with self.stt_lock:      # wartet höchstens auf eine laufende Vorschau (~0,3 s)
+                raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
             text, style = self._shape_text(raw, lang, target)
             if not text:
                 res["error"] = "Nichts verstanden"

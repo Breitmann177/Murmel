@@ -92,6 +92,12 @@ class Mic:
             chunks, self._chunks = self._chunks or [], None
         return np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
 
+    def snapshot(self) -> np.ndarray:
+        """Kopie der laufenden Aufnahme, ohne sie zu beenden (für die Live-Vorschau)."""
+        with self._lock:
+            chunks = list(self._chunks) if self._chunks is not None else []
+        return np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
+
     def cancel(self):
         with self._lock:
             self._chunks = None

@@ -15,10 +15,11 @@ import time
 
 from PySide6.QtCore import (QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer,
                             Property, QParallelAnimationGroup, Signal)
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPainterPath,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import QWidget
 
-WIN_W, WIN_H = 320, 96          # festes (unsichtbares) Fenster, Pille wird darin gezeichnet
+WIN_W, WIN_H = 520, 196         # festes (unsichtbares) Fenster: Pille unten, Text-Blase darüber
 BOTTOM_GAP = 12                 # Abstand der Pille zur Taskleiste
 BARS = 12
 
@@ -84,6 +85,9 @@ class Pill(QWidget):
         self._leave.timeout.connect(self._collapse)
 
         self._hover_slot = None
+        self._bubble_text = ""
+        self._bubble_a = 0.0
+        self._bubble_target = 0.0
         self._copied_until = 0.0
         self._logo = None
         self.colors = {"pill": "#121214", "pill_fg": "#F2F2F2", "line": "#2A2A2A", "hover": "#262626"}
@@ -170,6 +174,13 @@ class Pill(QWidget):
             self._back.start(hold_ms)
         self._ensure_timer()
 
+    def set_preview(self, text: str):
+        """Live-Text über der Pille. Leerer Text = Blase weich ausblenden."""
+        if text:
+            self._bubble_text = text
+        self._bubble_target = 1.0 if text else 0.0
+        self._ensure_timer()
+
     def set_progress(self, p):
         self._progress = p
         self.update()
@@ -191,10 +202,15 @@ class Pill(QWidget):
             self._tick.start()
 
     def _maybe_stop_timer(self):
-        if self.state in ("idle", "error") and self._anim.state() != QPropertyAnimation.Running:
+        if self.state in ("idle", "error") and self._anim.state() != QPropertyAnimation.Running \
+                and self._bubble_a == self._bubble_target:
             self._tick.stop()
 
     def _on_tick(self):
+        if self._bubble_a != self._bubble_target:               # Blase ein-/ausblenden
+            step = 0.12 if self._bubble_target > self._bubble_a else 0.2
+            self._bubble_a = min(1.0, self._bubble_a + step) if self._bubble_target > self._bubble_a \
+                else max(0.0, self._bubble_a - step)
         if self.state in ("recording", "handsfree", "command"):
             self._update_bars()
         self.update()
@@ -321,7 +337,40 @@ class Pill(QWidget):
             self._paint_check(p, r)
         elif self.state == "error" and r.width() > 120:
             self._text(p, r, self.message, 11, white)
+        self._paint_bubble(p, r)
         p.end()
+
+    def _paint_bubble(self, p, r):
+        """Live-Text: dunkle Blase über der Pille, zeigt die letzten 3 Zeilen."""
+        a = self._bubble_a
+        if a < 0.02 or not self._bubble_text:
+            return
+        f = QFont("Inter", 11)
+        f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
+        fm = QFontMetricsF(f)
+        padx, pady = 16, 10
+        max_text_w = WIN_W - 40 - 2 * padx
+        full = fm.boundingRect(QRectF(0, 0, max_text_w, 10000), Qt.TextWordWrap, self._bubble_text)
+        tw = min(max_text_w, full.width() + 2)
+        th = min(full.height(), fm.lineSpacing() * 3)
+        rect = QRectF((WIN_W - tw - 2 * padx) / 2, r.top() - 10 - th - 2 * pady, tw + 2 * padx, th + 2 * pady)
+        rect.translate(0, (1 - a) * 6)                       # beim Einblenden leicht nach oben gleiten
+        p.setPen(Qt.NoPen)
+        for i in range(5, 0, -1):
+            p.setBrush(QColor(0, 0, 0, int(8 * a)))
+            p.drawRoundedRect(rect.adjusted(-i, -i + 2, i, i + 2), 16 + i, 16 + i)
+        p.setBrush(QColor(18, 18, 20, int(242 * a)))
+        p.setPen(QPen(QColor(255, 255, 255, int(28 * a)), 1))
+        p.drawRoundedRect(rect, 16, 16)
+        inner = rect.adjusted(padx, pady, -padx, -pady)
+        p.save()
+        p.setClipRect(inner)
+        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, int(235 * a)))
+        # unten ausrichten: bei langem Text sieht man immer die neuesten Wörter
+        p.drawText(QRectF(inner.left(), inner.bottom() - full.height(), inner.width(), full.height()),
+                   Qt.TextWordWrap | Qt.AlignLeft, self._bubble_text)
+        p.restore()
 
     def _paint_menu(self, p, r):
         """Aufgeklappte Pille wie bei NoTime: ⚙  ●  Logo  ⤢  ⧉"""

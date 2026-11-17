@@ -74,11 +74,32 @@ def ensure_running(wait=6.0) -> bool:
     return False
 
 
+def local_models() -> list:
+    """Modelle direkt von der Festplatte lesen – klappt auch, wenn Ollama gerade nicht läuft
+    (vorher war die Modellauswahl deshalb ausgegraut)."""
+    base = os.path.join(os.path.expanduser("~"), ".ollama", "models", "manifests", "registry.ollama.ai")
+    out = []
+    try:
+        for ns in os.listdir(base):                      # meist "library"
+            for name in os.listdir(os.path.join(base, ns)):
+                for tag in os.listdir(os.path.join(base, ns, name)):
+                    full = f"{name}:{tag}" if ns == "library" else f"{ns}/{name}:{tag}"
+                    out.append(full)
+    except Exception:
+        pass
+    return sorted(out)
+
+
 def models() -> list:
     try:
         return [m["name"] for m in _req("/api/tags", timeout=1.0).get("models", [])]
     except Exception:
-        return []
+        return local_models()
+
+
+def warm(model):
+    """Modell laden und 30 min im Grafikspeicher halten (leere Anfrage = nur laden)."""
+    _req("/api/generate", {"model": model, "keep_alive": "30m"}, timeout=30)
 
 
 def pick_model(preferred=None):
@@ -96,13 +117,13 @@ def status() -> dict:
     if not installed():
         return {"installed": False, "running": False, "models": []}
     run = running()
-    return {"installed": True, "running": run, "models": models() if run else []}
+    return {"installed": True, "running": run, "models": models() if run else local_models()}
 
 
 def _chat(model, system, user, timeout):
     t0 = time.perf_counter()
     r = _req("/api/chat", {
-        "model": model, "stream": False, "think": False, "keep_alive": "10m",
+        "model": model, "stream": False, "think": False, "keep_alive": "30m",
         "options": {"temperature": 0, "num_ctx": 2048},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }, timeout=timeout)
