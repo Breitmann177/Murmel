@@ -29,7 +29,7 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "hover": (166, 46),          # aufgeklappt: Aufnahme · Logo · Einstellungen
     "recording": (164, 40),
     "handsfree": (232, 40),
-    "mini": (56, 20),            # Freihand nach 3 s ohne Maus: klein, roter Punkt + Mini-Pegel
+    "mini": (44, 20),            # Freihand nach 3 s ohne Maus: klein, nur Mini-Pegel
     "command": (184, 40),        # Command Mode: andere Farbe + ✨
     "processing": (164, 40),
     "done": (164, 40),
@@ -399,21 +399,15 @@ class Pill(QWidget):
         p.end()
 
     def _paint_mini(self, p, r):
-        """Dezente Aufnahme-Anzeige: pulsierender roter Punkt + 4 winzige Pegel-Balken."""
-        cy = r.center().y()
+        """Dezente Aufnahme-Anzeige: nur 4 winzige Pegel-Balken in der Mitte."""
+        cy, cx = r.center().y(), r.center().x()
         p.setPen(Qt.NoPen)
-        if self.paused:
-            p.setBrush(QColor(255, 255, 255, 110))
-        else:
-            pulse = (math.sin(time.monotonic() * math.tau / 1.6) + 1) / 2
-            p.setBrush(QColor(255, 69, 58, int(140 + 115 * pulse)))
-        p.drawEllipse(QPointF(r.left() + 13, cy), 3.6, 3.6)
         p.setBrush(QColor(255, 255, 255, 110 if self.paused else 220))
-        x0 = r.left() + 25
+        gap, bw = 6, 2.6
+        x0 = cx - (3 * gap + bw) / 2
         for i, v in enumerate(self._bars[4:8]):
             h = 2.5 if self.paused else max(2.5, v * (r.height() - 8))
-            p.drawRoundedRect(QRectF(x0 + i * 6, cy - h / 2, 2.6, h), 1.3, 1.3)
-
+            p.drawRoundedRect(QRectF(x0 + i * gap, cy - h / 2, bw, h), bw / 2, bw / 2)
     def _paint_bubble(self, p, r):
         """Live-Text: dunkle Blase über der Pille, zeigt die letzten 3 Zeilen."""
         a = self._bubble_a
