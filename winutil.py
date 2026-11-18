@@ -84,3 +84,13 @@ def window_title(hwnd) -> str:
     buf = ctypes.create_unicode_buffer(512)
     user32.GetWindowTextW(hwnd, buf, 512)
     return buf.value
+
+
+def prevent_sleep(on: bool) -> None:
+    """Während einer Aufnahme kein Standby (Bildschirm darf trotzdem ausgehen).
+    Gilt pro Thread – deshalb immer aus dem Qt-Hauptthread an- UND ausschalten."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    try:
+        kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+    except Exception:
+        pass

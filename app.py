@@ -27,7 +27,7 @@ from audio import SR, Mic
 from hotkeys import PushToTalkHook
 from stt import STT
 from ui.widget import Pill
-from winutil import process_name, user32, window_title
+from winutil import prevent_sleep, process_name, user32, window_title
 
 log = logging.getLogger("murmel")
 
@@ -267,6 +267,7 @@ class Controller(QObject):
         self.target = target
         self.t_press = time.monotonic()
         self.mic.begin()
+        prevent_sleep(True)
         self.hook.swallow_esc = True
         sounds.play("start", self.cfg.get("sounds", True))
         if handsfree:
@@ -357,6 +358,7 @@ class Controller(QObject):
 
     def _reset(self, pill_state, sound=True):
         self._stop_preview()
+        prevent_sleep(False)
         self.mic.cancel()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -385,6 +387,7 @@ class Controller(QObject):
             return
         mode = "command" if self.state == "command" else "dictate"
         self._stop_preview()
+        prevent_sleep(False)
         audio = self.mic.end()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
@@ -489,6 +492,7 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- Ende
     def quit(self):
+        prevent_sleep(False)
         self.hook.stop()
         self.mic.close()
         self.tray.hide()
