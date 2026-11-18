@@ -48,3 +48,7 @@ python -m venv .venv
 
 - Schriften: Instrument Serif, Inter – SIL Open Font License (`assets/fonts/OFL-*.txt`)
 - Icons: Lucide – ISC (`assets/icons/LICENSE-lucide.txt`)
+
+## Lizenz
+
+MIT – siehe [LICENSE](LICENSE). Schriften und Icons stehen unter ihren eigenen Lizenzen (siehe oben).
