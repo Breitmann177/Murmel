@@ -25,11 +25,11 @@ import sounds
 import storage
 import styles
 import theme
-from audio import SR, Mic
+from audio import SR, Mic, input_devices, rescan_devices
 from hotkeys import PushToTalkHook
 from stt import STT
 from ui.widget import Pill
-from winutil import idle_seconds, monitor_off, prevent_sleep, process_name, user32, window_title
+from winutil import idle_seconds, monitor_off, prevent_sleep, process_name, set_autostart, user32, window_title
 
 log = logging.getLogger("murmel")
 
@@ -95,6 +95,13 @@ class Controller(QObject):
         self.pill.show()
         self.pill.set_state("loading")
         self._start_mic()
+        # Mikrofon abgesteckt oder Treiber neu gestartet? Alle 3 s prüfen und neu verbinden.
+        self._mic_lost = False
+        self.mic_timer = QTimer(self, interval=3000)
+        self.mic_timer.timeout.connect(self._check_mic)
+        self.mic_timer.start()
+        if self.cfg.get("autostart"):
+            set_autostart(True)          # Pfad auffrischen, falls der Ordner verschoben wurde
         self.hook = None
         self._start_hook()
         threading.Thread(target=self._load, daemon=True, name="loader").start()
@@ -102,12 +109,34 @@ class Controller(QObject):
             QTimer.singleShot(500, self.show_onboarding)
 
     # --------------------------------------------------------------- Setup
-    def _start_mic(self):
+    def _start_mic(self, quiet=False):
         try:
             self.mic.start()
         except Exception as e:  # noqa: BLE001
-            log.error("Mikrofon: %s", e)
-            self.pill.set_state("error", "Kein Mikrofon", 5000)
+            if not quiet:
+                log.error("Mikrofon: %s", e)
+                self.pill.set_state("error", "Kein Mikrofon", 5000)
+            return False
+        # Alte Einstellungen speicherten die Gerätenummer -> einmalig auf den Namen umstellen
+        if isinstance(self.cfg.get("mic_device"), int) and self.mic.device_name:
+            self.cfg["mic_device"] = self.mic.device_name
+            self.mic.device = self.mic.device_name
+            config.save(self.cfg)
+        return True
+
+    def _check_mic(self):
+        if self.state != "idle" or self.mic.healthy():
+            return
+        if not self._mic_lost:
+            self._mic_lost = True
+            log.warning("Mikrofon antwortet nicht mehr, verbinde neu …")
+        self.mic.close()
+        rescan_devices()
+        self.mic = Mic(self.cfg.get("mic_device"))
+        self.pill.level_source = lambda: self.mic.level
+        if self._start_mic(quiet=True):
+            self._mic_lost = False
+            log.info("Mikrofon wieder da: %s", self.mic.device_name)
 
     def _start_hook(self):
         if self.hook:
@@ -120,15 +149,9 @@ class Controller(QObject):
         self.pill.hint = " + ".join(names[k] for k in self.cfg["hotkey"])
 
     def list_mics(self):
+        """Namen der Eingabegeräte (gespeichert wird der Name, nicht die Nummer)."""
         try:
-            import sounddevice as sd
-            seen, out = set(), []
-            for i, d in enumerate(sd.query_devices()):
-                if d["max_input_channels"] > 0 and d["hostapi"] == 0 and "mapper" not in d["name"].lower():
-                    if d["name"] not in seen:
-                        seen.add(d["name"])
-                        out.append((i, d["name"]))
-            return out
+            return [name for _i, name in input_devices()]
         except Exception:
             return []
 
@@ -198,7 +221,7 @@ class Controller(QObject):
             return
         self.cfg[key] = value
         config.save(self.cfg)
-        log.info("Einstellung %s = %r", key, value)
+        log.info("Einstellung %s = %r", key, "…" if key == "name" else value)
         if key == "hotkey":
             self._start_hook()
         elif key == "mic_device":
@@ -208,7 +231,10 @@ class Controller(QObject):
             self._start_mic()
         elif key == "theme":
             self.apply_theme()
-        elif key == "language" and key in ("language",):
+        elif key == "autostart":
+            if not set_autostart(bool(value)):
+                self.pill.set_state("error", "Autostart nicht gesetzt", 3000)
+        elif key == "language":
             for k, a in self.lang_actions.items():
                 a.setChecked(k == value)
         if self.window and key == "name":
@@ -400,7 +426,7 @@ class Controller(QObject):
         self.mic.paused = on
         self.pill.set_paused(on)
         if on:
-            self.hf_timer.stop()          # die 6-Minuten-Grenze zählt in der Pause nicht
+            self.hf_timer.stop()          # die Zeitgrenze zählt in der Pause nicht
         else:
             left = self.cfg.get("handsfree_limit_min", 240) * 60 - self.pill.elapsed()
             self.hf_timer.start(int(max(1, left) * 1000))
@@ -518,7 +544,7 @@ class Controller(QObject):
                 return
             mode = inject.paste(out, target, self.cfg["paste_restore_ms"])
             total = time.perf_counter() - t_release
-            log.info("Befehl %.2fs | %r", total, instruction)
+            log.info("Befehl %.2fs | %d Zeichen Anweisung", total, len(instruction))   # Inhalt nicht ins Log
             storage.add_history(process_name(target), f"✨ {instruction}", out, _lang, len(audio) / SR, total)
             res.update(ok=True, mode=mode, text=out, latency=total)
         except Exception:  # noqa: BLE001

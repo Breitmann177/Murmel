@@ -732,8 +732,8 @@ class MainWindow(QWidget):
         g = self._group(lay, "Mikrofon")
         self.mic_combo = QComboBox()
         self.mic_combo.addItem("Windows-Standard", None)
-        for idx, name in self.ctl.list_mics():
-            self.mic_combo.addItem(name, idx)
+        for name in self.ctl.list_mics():
+            self.mic_combo.addItem(name, name)
         cur = self.mic_combo.findData(c.get("mic_device"))
         self.mic_combo.setCurrentIndex(max(0, cur))
         self.mic_combo.currentIndexChanged.connect(
@@ -777,6 +777,9 @@ class MainWindow(QWidget):
         snd = Toggle(bool(c.get("sounds", True)))
         snd.toggled.connect(lambda v: self.setting_changed.emit("sounds", v))
         self._setting_row(g, "Sounds", "Leiser Ton beim Start und Ende der Aufnahme.", snd)
+        auto = Toggle(bool(c.get("autostart", False)))
+        auto.toggled.connect(lambda v: self.setting_changed.emit("autostart", v))
+        self._setting_row(g, "Mit Windows starten", "Murmel startet beim Anmelden im Tray.", auto)
         oled = Toggle(int(c.get("screen_off_s", 60)) > 0)
         oled.toggled.connect(lambda v: self.setting_changed.emit("screen_off_s", 60 if v else 0))
         self._setting_row(g, "Bildschirm automatisch aus", "Bei Aufnahme nach 1 Min. – schont OLED.", oled)

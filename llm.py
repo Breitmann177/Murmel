@@ -12,13 +12,14 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.request
 
 log = logging.getLogger("murmel.llm")
 URL = "http://127.0.0.1:11434"
-EXE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
+DEFAULT_EXE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
 PREFERRED = ("qwen3.5:4b", "qwen3:4b", "llama3.2:3b", "gemma3:4b", "qwen2.5:3b", "phi4-mini", "qwen3:8b")
 
 CLEAN_PROMPT = (
@@ -34,8 +35,16 @@ COMMAND_PROMPT = (
 )
 
 
+def exe():
+    """ollama.exe finden: Standard-Installationsordner, sonst PATH (z. B. eigener Ordner, winget, scoop)."""
+    if os.path.exists(DEFAULT_EXE):
+        return DEFAULT_EXE
+    return shutil.which("ollama")
+
+
 def installed() -> bool:
-    return os.path.exists(EXE)
+    # Läuft Ollama als Dienst oder in Docker, gibt es evtl. keine exe – dann zählt, dass es antwortet
+    return bool(exe()) or running()
 
 
 def _req(path, payload=None, timeout=2.0):
@@ -58,10 +67,11 @@ def ensure_running(wait=6.0) -> bool:
     """Ollama ist installiert, läuft aber nicht? Dann unsichtbar im Hintergrund starten."""
     if running():
         return True
-    if not installed():
+    path = exe()
+    if not path:
         return False
     try:
-        subprocess.Popen([EXE, "serve"], creationflags=0x08000000 | 0x00000008,   # kein Fenster, losgelöst
+        subprocess.Popen([path, "serve"], creationflags=0x08000000 | 0x00000008,   # kein Fenster, losgelöst
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         log.warning("Ollama-Start fehlgeschlagen: %s", e)

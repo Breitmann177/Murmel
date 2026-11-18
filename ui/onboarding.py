@@ -95,8 +95,8 @@ class Onboarding(QWidget):
         l.addSpacing(16)
         self.mic_combo = QComboBox()
         self.mic_combo.addItem("Windows-Standard", None)
-        for idx, name in self.ctl.list_mics():
-            self.mic_combo.addItem(name, idx)
+        for name in self.ctl.list_mics():
+            self.mic_combo.addItem(name, name)
         self.mic_combo.setCurrentIndex(max(0, self.mic_combo.findData(self.ctl.cfg.get("mic_device"))))
         self.mic_combo.currentIndexChanged.connect(
             lambda _: self.ctl.change_setting("mic_device", self.mic_combo.currentData()))

@@ -18,18 +18,25 @@ Lokale Diktier-App für Windows 11. **Strg + Win halten, sprechen, loslassen** �
 - Verlauf, Wörterbuch und Einstellungen liegen in `%APPDATA%\Murmel` – nicht in diesem Repo
 - Diktate werden vom Windows-Zwischenablageverlauf (Win + V) ausgenommen; die alte Zwischenablage wird wiederhergestellt
 - Der Tastatur-Hook reagiert nur auf die eingestellte Tastenkombination und speichert keine Tasten
+- Das Log (`murmel.log`) enthält keine diktierten Texte, nur Zeiten und Längen
 
 ## Installation
 
-Python 3.12 (64-bit):
+1. **Python 3.12 (64-bit)** von [python.org](https://www.python.org/downloads/) installieren, dabei „Add python.exe to PATH“ anhaken.
+2. Dieses Repo herunterladen (Code → Download ZIP) und entpacken.
+3. **`install.bat`** doppelklicken. Das legt eine eigene Umgebung an, installiert alles, erstellt einen Eintrag im Startmenü und startet Murmel.
+
+Mit NVIDIA-GPU werden die CUDA-Pakete automatisch mitinstalliert und `large-v3-turbo` auf der GPU genutzt (beim ersten Start ~1,6 GB Download), sonst `small` auf der CPU. Autostart lässt sich in den Einstellungen einschalten.
+
+<details><summary>Manuell</summary>
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip install -r requirements.txt        # ohne NVIDIA
+.venv\Scripts\python -m pip install -r requirements-gpu.txt    # mit NVIDIA
 .venv\Scripts\pythonw main.pyw
 ```
-
-Mit NVIDIA-GPU wird automatisch `large-v3-turbo` auf CUDA genutzt (beim ersten Start ~1,6 GB Download), sonst `small` auf der CPU.
+</details>
 
 ## Tests
 

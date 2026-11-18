@@ -6,6 +6,7 @@ Speicher und Rechenzeit fast ohne Qualitätsverlust; auf der CPU ist int8 der sc
 """
 import logging
 import os
+import re
 import time
 
 import numpy as np
@@ -30,12 +31,26 @@ def _setup_cuda_dlls():
 
 _setup_cuda_dlls()
 
-# Typische Whisper-Halluzinationen bei Stille (aus NoTime übernommen)
+# Typische Whisper-Halluzinationen bei Stille (aus NoTime übernommen).
+# Eindeutige Phrasen: tauchen sie in einem kurzen Text auf, ist er erfunden.
 HALLUCINATIONS = (
-    "untertitel", "vielen dank fürs zuschauen", "vielen dank für's zuschauen",
-    "danke fürs zuschauen", "copyright", "amara.org", "thanks for watching",
-    "abonnieren", "subscribe", "swr 20", "ard text", "zdf 20",
+    "untertitel im auftrag", "untertitel der amara", "untertitelung", "amara.org",
+    "vielen dank fürs zuschauen", "vielen dank für's zuschauen", "danke fürs zuschauen",
+    "thanks for watching", "swr 20", "ard text", "zdf 20",
 )
+# Einzelwörter, die auch in echten Diktaten vorkommen ("Bitte abonnieren Sie den Newsletter").
+# Nur verwerfen, wenn der ganze Text kaum mehr als dieses Wort ist.
+HALLUCINATION_WORDS = ("untertitel", "copyright", "abonnieren", "subscribe")
+
+
+def is_hallucination(text: str) -> bool:
+    t = text.lower().strip()
+    if not t or len(t) >= 90:
+        return False
+    if any(h in t for h in HALLUCINATIONS):
+        return True
+    words = re.findall(r"\w+", t)
+    return len(words) <= 4 and any(w in t for w in HALLUCINATION_WORDS)
 
 
 class STT:
@@ -141,7 +156,7 @@ class STT:
         text = tok.decode(res.sequences_ids[0]).strip()
         if res.no_speech_prob > 0.6 and res.scores[0] < -0.8:
             text = ""
-        if len(text) < 90 and any(h in text.lower() for h in HALLUCINATIONS):
+        if is_hallucination(text):
             text = ""
         return text, lang, time.perf_counter() - t0
 
@@ -158,7 +173,7 @@ class STT:
             txt = s.text.strip()
             if not txt:
                 continue
-            if len(txt) < 90 and any(h in txt.lower() for h in HALLUCINATIONS):
+            if is_hallucination(txt):
                 continue
             if s.no_speech_prob > 0.6 and s.avg_logprob < -0.8:
                 continue

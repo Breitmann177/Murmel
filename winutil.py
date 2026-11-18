@@ -116,3 +116,30 @@ def monitor_off() -> None:
     PostMessage statt SendMessage: ein hängendes Fenster könnte uns sonst blockieren."""
     HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER = 0xFFFF, 0x0112, 0xF170
     user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
+
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def set_autostart(on: bool) -> bool:
+    """Murmel beim Anmelden starten (HKCU\\...\\Run, kein Adminrecht nötig)."""
+    import os
+    import sys
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if on:
+                exe = sys.executable
+                pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+                if os.path.exists(pyw):
+                    exe = pyw                      # ohne Konsolenfenster
+                main = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.pyw")
+                winreg.SetValueEx(k, "Murmel", 0, winreg.REG_SZ, f'"{exe}" "{main}"')
+            else:
+                try:
+                    winreg.DeleteValue(k, "Murmel")
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
+        return False

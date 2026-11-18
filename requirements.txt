@@ -3,6 +3,3 @@ sounddevice>=0.5
 numpy>=2.0
 PySide6-Essentials>=6.8
 psutil>=6.0
-# GPU (RTX 5070): CUDA-Bibliotheken als pip-Pakete
-nvidia-cublas-cu12
-nvidia-cudnn-cu12==9.*
