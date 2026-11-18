@@ -9,7 +9,7 @@ from datetime import datetime
 
 from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QSize, Qt, QTimer, QVariantAnimation,
                             Property, Signal)
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame, QGraphicsOpacityEffect,
                                QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton,
@@ -186,7 +186,7 @@ class MainWindow(QWidget):
             tg.on_color, tg.off_color = self.t["accent"], self.t["line"]
             tg.knob_color = "#FFFFFF" if not theme.is_dark(self.cfg.get("theme")) else "#EDEDED"
             tg.update()
-        self.search_icon.setPixmap(theme.icon_pixmap("search", self.t["faint"], 16))
+        self.search_action.setIcon(theme.icon("search", self.t["faint"], 16))
         self._dark_titlebar()
         if self.isVisible():
             self.refresh()
@@ -345,7 +345,7 @@ class MainWindow(QWidget):
         self.st_saved.sub.setText(f"Streak: {s['streak']} {'Tag' if s['streak'] == 1 else 'Tage'}")
         self._fill_rows(self.recent_box, storage.history(limit=5), compact=True)
 
-    def _fill_rows(self, box, rows, compact=False):
+    def _fill_rows(self, box, rows, compact=False, open_=False):
         while box.count():
             it = box.takeAt(0)
             if it.widget():
@@ -356,40 +356,66 @@ class MainWindow(QWidget):
             box.addWidget(e)
             return
         for i, r in enumerate(rows):
-            box.addWidget(self._entry(r, compact, last=(i == len(rows) - 1)))
+            box.addWidget(self._entry(r, compact, last=(i == len(rows) - 1), open_=open_))
 
-    def _entry(self, r, compact, last=False):
+    @staticmethod
+    def _when(ts):
+        when = datetime.fromtimestamp(ts)
+        days = (datetime.now().date() - when.date()).days
+        day = "Heute" if days == 0 else "Gestern" if days == 1 else when.strftime("%d.%m.%Y")
+        return f"{day}, {when:%H:%M}"
+
+    def _entry(self, r, compact, last=False, open_=False):
+        """Eine Zeile: nur Datum, App und Länge – der Text klappt erst auf Wunsch auf
+        (lange Vorlesungs-Diktate würden sonst die ganze Seite füllen)."""
         f = QFrame()
         f.setObjectName("row" if compact and not last else ("histrow" if not compact else ""))
-        lay = QHBoxLayout(f)
-        lay.setContentsMargins(0 if compact else 18, 12, 0 if compact else 10, 12)
-        lay.setSpacing(12)
+        outer = QVBoxLayout(f)
+        outer.setContentsMargins(0 if compact else 18, 12, 0 if compact else 10, 12)
+        outer.setSpacing(8)
+        lay = QHBoxLayout()
+        lay.setSpacing(6)
+        outer.addLayout(lay)
+
         txt = QVBoxLayout()
-        txt.setSpacing(3)
-        when = datetime.fromtimestamp(r["ts"])
+        txt.setSpacing(2)
+        title = label(self._when(r["ts"]))
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        txt.addWidget(title)
         app = pretty_app(r.get("app") or "")
-        meta = when.strftime("%H:%M") if when.date() == datetime.now().date() else when.strftime("%d.%m. %H:%M")
-        txt.addWidget(label(f"{meta}  ·  {app}" if app else meta, "faint"))
+        words = r.get("words") or len(r["clean"].split())
+        txt.addWidget(label(" · ".join(x for x in (app, f"{words} Wörter") if x), "muted"))
+        lay.addLayout(txt, 1)
+
         body = label(r["clean"], None, wrap=True)
         body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         body.setStyleSheet("font-size: 14px;")
-        txt.addWidget(body)
-        if not compact:
-            raw = label(f"Roh: {r['raw']}", "muted", wrap=True)
-            raw.setVisible(False)
-            txt.addWidget(raw)
-        lay.addLayout(txt, 1)
-        for ic, tip, fn in (("copy", "Kopieren", lambda: self._copy(r["clean"])),) + (
-                (("book-a", "Zum Wörterbuch hinzufügen", lambda: self._add_word_from(body)),
-                 ("search", "Rohtext zeigen", lambda: raw.setVisible(not raw.isVisible())),
-                 ("trash-2", "Löschen", lambda: self._delete(r["id"]))) if not compact else ()):
+        body.setVisible(open_)
+        outer.addWidget(body)
+
+        def toggle():
+            body.setVisible(not body.isVisible())
+            arrow.setIcon(theme.icon("chevron-up" if body.isVisible() else "chevron-down", self.t["muted"], 16))
+
+        def copy():
+            self._copy(r["clean"])
+            cp.setIcon(theme.icon("clipboard-check", self.t["accent"], 16))
+            QTimer.singleShot(1300, lambda: cp.setIcon(theme.icon("copy", self.t["muted"], 16)))
+
+        def btn(ic, tip, fn):
             b = QToolButton()
             b.setObjectName("iconbtn")
             b.setIcon(theme.icon(ic, self.t["muted"], 16))
             b.setToolTip(tip)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(fn)
-            lay.addWidget(b, 0, Qt.AlignTop)
+            lay.addWidget(b, 0, Qt.AlignVCenter)
+            return b
+
+        cp = btn("copy", "Text kopieren", copy)
+        arrow = btn("chevron-up" if open_ else "chevron-down", "Text anzeigen", toggle)
+        if not compact:
+            btn("trash-2", "Löschen", lambda: self._delete(r["id"]))
         return f
 
     def _copy(self, text):
@@ -413,9 +439,9 @@ class MainWindow(QWidget):
         srl.setContentsMargins(0, 0, 0, 0)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Suchen …")
-        self.search.setTextMargins(26, 0, 0, 0)
-        self.search_icon = QLabel(self.search)
-        self.search_icon.move(14, 13)
+        self.search.setClearButtonEnabled(True)
+        # Lupe als echtes Feld-Symbol (vorher ein drübergelegtes Bild, das verrutschen konnte)
+        self.search_action = self.search.addAction(QIcon(), QLineEdit.LeadingPosition)
         srl.addWidget(self.search)
         lay.addWidget(sr)
         self._search_timer = QTimer(self, singleShot=True, interval=200)
@@ -429,7 +455,11 @@ class MainWindow(QWidget):
         return w
 
     def _refresh_history(self):
-        self._fill_rows(self.hist_box, storage.history(self.search.text().strip(), limit=200))
+        q = self.search.text().strip()
+        rows = storage.history(q, limit=200)
+        self._fill_rows(self.hist_box, rows, open_=bool(q))     # bei Suche Treffer gleich aufgeklappt
+        if q and not rows:
+            self.hist_box.itemAt(0).widget().setText(f"Nichts gefunden für „{q}“.")
 
     def _delete(self, entry_id):
         storage.delete_history(entry_id)
@@ -537,8 +567,8 @@ class MainWindow(QWidget):
                  "hilft der Erkennung", lambda _=False, i=r["id"]: (storage.delete_dictionary(i),
                                                                    self._refresh_dictionary()))
                 for r in storage.dictionary()]
-        self._simple_rows(self.dict_box, rows, "Noch leer. Tipp: Im Verlauf ein Wort markieren und "
-                                               "auf das Buch-Symbol klicken.")
+        self._simple_rows(self.dict_box, rows, "Noch leer. Trag oben Namen oder Fachwörter ein, "
+                                               "die Murmel falsch schreibt.")
 
     # ---------------------------------------------------------------- Snippets
     def _snippets(self):
@@ -749,8 +779,7 @@ class MainWindow(QWidget):
         self._setting_row(g, "Sounds", "Leiser Ton beim Start und Ende der Aufnahme.", snd)
         oled = Toggle(int(c.get("screen_off_s", 60)) > 0)
         oled.toggled.connect(lambda v: self.setting_changed.emit("screen_off_s", 60 if v else 0))
-        self._setting_row(g, "Bildschirm aus bei Aufnahme", "Nach 1 Minute ohne Maus/Tastatur wird der Bildschirm "
-                                                            "schwarz (schont OLED) – die Aufnahme läuft weiter.", oled)
+        self._setting_row(g, "Bildschirm automatisch aus", "Bei Aufnahme nach 1 Min. – schont OLED.", oled)
         th = Segmented([("light", "Hell"), ("dark", "Dunkel"), ("system", "System")], c.get("theme", "system"))
         th.changed.connect(lambda v: self.setting_changed.emit("theme", v))
         self._setting_row(g, "Design", None, th)
