@@ -1,6 +1,6 @@
 # Murmel
 
-Lokale Diktier-App für Windows 11. **Strg + Win halten, sprechen, loslassen** – der Text landet dort, wo der Cursor ist. Alles läuft auf dem eigenen Rechner: keine Cloud, kein Konto, kein API-Key.
+Lokale Diktier-App für **Windows 11 und Linux**. **Strg + Win (Linux: Strg + Super) halten, sprechen, loslassen** – der Text landet dort, wo der Cursor ist. Alles läuft auf dem eigenen Rechner: keine Cloud, kein Konto, kein API-Key.
 
 ## Was Murmel kann
 
@@ -15,12 +15,12 @@ Lokale Diktier-App für Windows 11. **Strg + Win halten, sprechen, loslassen** �
 ## Datenschutz
 
 - Netzwerk nur für den einmaligen Modell-Download (Hugging Face) und zu Ollama auf `localhost`
-- Verlauf, Wörterbuch und Einstellungen liegen in `%APPDATA%\Murmel` – nicht in diesem Repo
+- Verlauf, Wörterbuch und Einstellungen liegen in `%APPDATA%\Murmel` (Linux: `~/.config/murmel`) – nicht in diesem Repo
 - Diktate werden vom Windows-Zwischenablageverlauf (Win + V) ausgenommen; die alte Zwischenablage wird wiederhergestellt
 - Der Tastatur-Hook reagiert nur auf die eingestellte Tastenkombination und speichert keine Tasten
 - Das Log (`murmel.log`) enthält keine diktierten Texte, nur Zeiten und Längen
 
-## Installation
+## Installation (Windows)
 
 1. **Python 3.12 (64-bit)** von [python.org](https://www.python.org/downloads/) installieren, dabei „Add python.exe to PATH“ anhaken.
 2. Dieses Repo herunterladen (Code → Download ZIP) und entpacken.
@@ -37,6 +37,36 @@ python -m venv .venv
 .venv\Scripts\pythonw main.pyw
 ```
 </details>
+
+## Installation (Linux)
+
+Getestet auf Fedora mit GNOME (Wayland). Das Skript kennt auch Ubuntu/Debian, Arch und openSUSE.
+
+```bash
+git clone https://github.com/Breitmann177/Murmel.git
+cd Murmel
+./install.sh
+```
+
+Das Skript installiert ein paar Systempakete, legt eine eigene Python-3.13-Umgebung an (über
+`uv`, egal welches Python dein System hat), richtet die Tastenrechte ein und trägt Murmel ins
+App-Menü ein. Danach einmal ab- und wieder anmelden.
+
+**Unterschiede zu Windows**
+
+- Tastenkürzel: Strg + Super (Super = Windows-Taste). Unter Wayland gibt es keine globalen
+  Tasten-Hooks, deshalb liest Murmel die Tastatur über evdev.
+- Eingefügt wird über eine virtuelle Tastatur (uinput): Strg + V, in Terminals Strg + Shift + V.
+- Die aktive App erkennt Murmel über die Barrierefreiheits-Schnittstelle (AT-SPI). Das klappt bei
+  GTK/Qt-Apps und Terminals. Wenn eine App nicht erkannt wird, gilt der Stil „Standard“.
+- Mikrofon: immer das Standardgerät von PipeWire/PulseAudio (in den Systemeinstellungen wählbar).
+- Esc bricht die Aufnahme ab, kommt aber zusätzlich auch bei der App an.
+
+**Rechte:** `install.sh` legt die udev-Regel `/etc/udev/rules.d/70-murmel.rules` an. Damit darf der
+gerade angemeldete Nutzer Tastaturen lesen und eine virtuelle Tastatur anlegen. Murmel achtet nur
+auf die eingestellte Tastenkombination und speichert keine Tasten. Die Regel gilt aber für alle
+Programme dieses Nutzers. Wer das nicht möchte, löscht die Datei, dann bleibt der Text nur in
+der Zwischenablage.
 
 ## Tests
 

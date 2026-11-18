@@ -48,7 +48,12 @@ class Resampler:
 
 
 def input_devices():
-    """(Index, Name) aller Eingabegeräte über MME (Host-API 0), ohne Dubletten und "Mapper"."""
+    """(Index, Name) aller Eingabegeräte über MME (Host-API 0), ohne Dubletten und "Mapper".
+    Linux: leer – dort nimmt Murmel immer das Standard-Mikrofon von PipeWire/PulseAudio (in den
+    Systemeinstellungen wählbar). Die rohen ALSA-Geräte würden PipeWire das Mikrofon wegnehmen."""
+    import sys
+    if sys.platform != "win32":
+        return []
     import sounddevice as sd
     seen, out = set(), []
     for i, d in enumerate(sd.query_devices()):
@@ -72,7 +77,7 @@ def rescan_devices():
 
 class Mic:
     def __init__(self, device=None):
-        # device = Gerätename (str) oder None für den Windows-Standard. Nummern verschieben sich,
+        # device = Gerätename (str) oder None für den System-Standard. Nummern verschieben sich,
         # sobald ein USB-Headset an- oder abgesteckt wird, deshalb speichern wir den Namen.
         self.device = device
         self.level = 0.0               # 0..~0.3, schnell hoch / langsam runter
@@ -86,7 +91,7 @@ class Mic:
         self.last_cb = 0.0
 
     def _resolve(self):
-        """Name -> aktuelle Gerätenummer. Gerät gerade nicht da? Dann Windows-Standard."""
+        """Name -> aktuelle Gerätenummer. Gerät gerade nicht da? Dann System-Standard."""
         if self.device is None or isinstance(self.device, int):
             return self.device
         for i, name in input_devices():

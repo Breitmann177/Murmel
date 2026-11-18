@@ -65,6 +65,7 @@ class Speicher(unittest.TestCase):
         self.assertIn("Musterstadt", self.s.hotwords())
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows-Hook")
 class Hook(unittest.TestCase):
     def setUp(self):
         import hotkeys

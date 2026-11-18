@@ -3,3 +3,6 @@ sounddevice>=0.5
 numpy>=2.0
 PySide6-Essentials>=6.8
 psutil>=6.0
+# Linux: Tastenkürzel/Einfügen (evdev) und D-Bus (aktive App, Bildschirm, Leerlauf)
+evdev>=1.7; sys_platform == "linux"
+jeepney>=0.8; sys_platform == "linux"

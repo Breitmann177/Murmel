@@ -16,7 +16,11 @@ log = logging.getLogger("murmel.stt")
 
 def _setup_cuda_dlls():
     """cuBLAS/cuDNN kommen als pip-Pakete (nvidia-*-cu12) mit. Windows findet deren DLLs nicht von
-    selbst – also die bin-Ordner in den Suchpfad hängen, BEVOR ctranslate2 sie lädt."""
+    selbst – also die bin-Ordner in den Suchpfad hängen, BEVOR ctranslate2 sie lädt.
+    Linux: LD_LIBRARY_PATH wirkt nur beim Programmstart, deshalb die .so-Dateien vorab laden."""
+    if os.name != "nt":
+        _preload_cuda_libs()
+        return
     try:
         import site
         for sp in site.getsitepackages():
@@ -27,6 +31,25 @@ def _setup_cuda_dlls():
                     os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
     except Exception as e:  # noqa: BLE001
         log.warning("CUDA-Pfade: %s", e)
+
+
+
+def _preload_cuda_libs():
+    import ctypes
+    import glob
+    import site
+    try:
+        dirs = site.getsitepackages()
+    except Exception:  # noqa: BLE001
+        return
+    for sp in dirs:
+        for pattern in ("cublas/lib/libcublasLt.so.*", "cublas/lib/libcublas.so.*",
+                        "cudnn/lib/libcudnn*.so.*"):
+            for lib in sorted(glob.glob(os.path.join(sp, "nvidia", pattern))):
+                try:
+                    ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
 
 
 _setup_cuda_dlls()

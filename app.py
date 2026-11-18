@@ -19,17 +19,17 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import cleanup
 import config
-import inject
 import llm
 import sounds
 import storage
 import styles
 import theme
 from audio import SR, Mic, input_devices, rescan_devices
-from hotkeys import PushToTalkHook
 from stt import STT
 from ui.widget import Pill
-from winutil import idle_seconds, monitor_off, prevent_sleep, process_name, set_autostart, user32, window_title
+import osapi
+from osapi import (PushToTalkHook, foreground, idle_seconds, inject, monitor_off, monitor_on,
+                   prevent_sleep, process_name, set_autostart, window_title)
 
 log = logging.getLogger("murmel")
 
@@ -47,6 +47,7 @@ class Controller(QObject):
         super().__init__()
         self.app = app
         self.cfg = config.load()
+        osapi.init(app)                  # Linux: Zwischenablage-Brücke + virtuelle Tastatur
         theme.load_fonts()
         self.bridge = Bridge()
         self.mic = Mic(self.cfg.get("mic_device"))
@@ -87,7 +88,7 @@ class Controller(QObject):
         self.hf_timer = QTimer(self, singleShot=True)
         self.hf_timer.timeout.connect(self.finish)
         # OLED: während einer Freihand-Aufnahme Bildschirm nach 1 min ohne Eingabe ausschalten
-        self.screen_timer = QTimer(self, interval=5000)
+        self.screen_timer = QTimer(self, interval=1000)
         self.screen_timer.timeout.connect(self._check_screen)
         self._screen_off = False
 
@@ -145,8 +146,7 @@ class Controller(QObject):
         command = self.cfg.get("command_hotkey") if llm.installed() else None
         self.hook = PushToTalkHook(self.cfg["hotkey"], self.bridge.hotkey.emit, command=command)
         self.hook.start()
-        names = {"ctrl": "Strg", "win": "Win", "alt": "Alt", "shift": "Shift", "rctrl": "Rechte Strg"}
-        self.pill.hint = " + ".join(names[k] for k in self.cfg["hotkey"])
+        self.pill.hint = osapi.combo_text(self.cfg["hotkey"])
 
     def list_mics(self):
         """Namen der Eingabegeräte (gespeichert wird der Name, nicht die Nummer)."""
@@ -276,10 +276,10 @@ class Controller(QObject):
                 self.pill.set_state("error", "Modell lädt noch …", 1500)
                 return
             handsfree = now - self.last_tap < self.cfg["double_tap_s"]
-            self._begin(user32.GetForegroundWindow(), handsfree)
+            self._begin(foreground(), handsfree)
         elif ev in ("command_press", "upgrade"):
             if ev == "command_press" and self.state == "idle" and self.ready:
-                self._begin(user32.GetForegroundWindow(), False)
+                self._begin(foreground(), False)
             if self.state == "recording":
                 self.state = "command"            # gleiche Aufnahme, wird jetzt eine Anweisung
                 self.pill.set_state("command")
@@ -387,7 +387,7 @@ class Controller(QObject):
         """Klick auf ● in der Pille. Die Pille aktiviert sich nie, also ist das Vordergrund-
         fenster immer noch deine App – genau dorthin kommt der Text."""
         if self.state == "idle" and self.ready:
-            self._begin(user32.GetForegroundWindow(), True)
+            self._begin(foreground(), True)
 
     def copy_last(self):
         rows = storage.history(limit=1)
@@ -395,8 +395,14 @@ class Controller(QObject):
             inject.set_text(rows[0]["clean"], exclude_history=False)
             self.pill.mark_copied()
 
+    def _wake_screen(self):
+        if self._screen_off:
+            monitor_on()
+            self._screen_off = False
+
     def _reset(self, pill_state, sound=True):
         self.screen_timer.stop()
+        self._wake_screen()
         self._stop_preview()
         self._hf_gen += 1                 # Häppchen-Erkennung einer abgebrochenen Aufnahme stoppen
         prevent_sleep(False)
@@ -412,6 +418,8 @@ class Controller(QObject):
             return
         idle = idle_seconds()
         if idle < 5:
+            if self._screen_off:
+                monitor_on()                  # Linux/GNOME: selbst wieder einschalten
             self._screen_off = False          # du hast die Maus bewegt -> Bildschirm ist wieder an
         elif idle >= limit and not self._screen_off:
             self._screen_off = True
@@ -440,6 +448,7 @@ class Controller(QObject):
             return
         mode = "command" if self.state == "command" else "dictate"
         self.screen_timer.stop()
+        self._wake_screen()
         parts, done = None, 0
         if self.state == "handsfree":
             with self._hf_lock:          # ab jetzt nimmt die Häppchen-Schleife nichts mehr an
@@ -603,8 +612,13 @@ class Controller(QObject):
 
     # ---------------------------------------------------------------- Ende
     def quit(self):
+        self.mic_timer.stop()            # sonst verbindet der Wächter das Mikro gleich wieder
+        self.screen_timer.stop()
+        self._wake_screen()
         prevent_sleep(False)
         self.hook.stop()
         self.mic.close()
         self.tray.hide()
-        self.app.quit()
+        # exit() statt quit(): quit() fragt erst alle Fenster, und das Hauptfenster lehnt Schließen
+        # ab (es geht in den Tray) – dann würde "Beenden" gar nichts tun.
+        self.app.exit(0)
