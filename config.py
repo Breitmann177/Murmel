@@ -18,7 +18,7 @@ DEFAULTS = {
     "mic_device": None,                 # None = Windows-Standard
     "min_press_s": 0.3,                 # kürzer = Versehen
     "double_tap_s": 0.45,               # zweimal tippen = Freihand
-    "handsfree_max_s": 360,
+    "handsfree_limit_min": 240,         # Freihand: Sicherheitsgrenze (4 h), reicht für jede Vorlesung
     "paste_restore_ms": 220,            # so lange bleibt der Text in der Zwischenablage
     "name": "",                         # für "Guten Morgen, …"
     "sounds": True,
@@ -29,6 +29,7 @@ DEFAULTS = {
     "onboarded": False,
     "live_preview": True,               # Text-Blase beim Sprechen (nur mit GPU)
     "autostart": False,
+    "screen_off_s": 60,                 # Freihand: Bildschirm nach 1 min ohne Eingabe aus (OLED), 0 = aus
 }
 
 

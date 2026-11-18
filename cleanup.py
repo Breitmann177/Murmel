@@ -67,7 +67,7 @@ def remove_fillers(text, lang):
     for lg in langs:
         pat = "|".join(ALWAYS_FILLERS[lg])
         t = re.sub(rf"(?i)(^|[\s,.;:!?(])(?:{pat})(?=[\s,.;:!?)]|$)[,.]?", r"\1", t)
-    t = re.sub(r"(^|[.!?]\s*|\n)\s+", r"\1", t.lstrip())    # Lücken am Satzanfang schließen
+    t = re.sub(r"([.!?]) {2,}", r"\1 ", t.lstrip())    # Lücken nach entferntem Füllwort schließen    # Lücken am Satzanfang schließen
     soft = SOFT_FILLERS["en" if lang == "en" else "de"]
     pat = "|".join(re.escape(s) for s in sorted(soft, key=len, reverse=True))
     # am Satzanfang: "Also ich wollte …" -> "Ich wollte …"  (nur wenn danach noch was kommt)
@@ -197,6 +197,7 @@ def polish(text, lang):
     t = re.sub(r",\s*([.!?])", r"\1", t)                 # ",." -> "."
     t = re.sub(r"([,;:])(?=[^\s\d\n])", r"\1 ", t)       # Leerzeichen nach Komma
     t = re.sub(r"([.!?])\1+", r"\1", t)                  # ".." -> "."
+    t = re.sub(r"([a-zäöüß]{2}[.!?])(?=[A-ZÄÖÜ])", r"\1 ", t)  # "deployen.Heute" -> "deployen. Heute"
     t = re.sub(r"[ \t]{2,}", " ", t)
     t = re.sub(r"[ \t]*\n[ \t]*", "\n", t)
     t = re.sub(r"^[\s,.;:]+", "", t).rstrip(" ,;")
@@ -208,8 +209,19 @@ def polish(text, lang):
         out.append(sent + sep)
     t = "".join(out)
     # Großschreibung am Anfang und nach Satzende/Zeilenumbruch
-    t = re.sub(r"(^|[.!?]\s+|\n)([a-zäöü])", lambda m: m.group(1) + m.group(2).upper(), t)
+    src = t
+
+    def cap(m):
+        # nach Abkürzungen ("z.B. wichtig", "bzw. morgen") ist kein Satz zu Ende
+        if m.group(1).startswith(".") and ABBREV.search(src[:m.start(1) + 1]):
+            return m.group(0)
+        return m.group(1) + m.group(2).upper()
+    t = re.sub(r"(^|[.!?]\s+|\n)([a-zäöü])", cap, t)
     return t.strip()
+
+
+ABBREV = re.compile(r"(?i)(?:\b[a-zäöü]\.){2,}$|\b(?:bzw|ca|usw|etc|vgl|evtl|ggf|inkl|bspw|zzgl|vs|"
+                    r"nr|str|bzgl|max|min|ggü|e\.g|i\.e)\.$")
 
 
 def clean(text: str, lang: str = "de", level: str = "normal", replacements=None) -> str:

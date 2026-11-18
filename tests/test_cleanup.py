@@ -105,6 +105,14 @@ class Woerterbuch(unittest.TestCase):
         self.assertEqual(clean("Frag doch mal gepeteh.", replacements={"gepeteh": "GPT"}), "Frag doch mal GPT.")
 
 
+class Leerzeichen(unittest.TestCase):
+    def test_nach_satzende(self):
+        self.assertEqual(clean("Das war gut.Heute machen wir weiter."), "Das war gut. Heute machen wir weiter.")
+
+    def test_abkuerzung_bleibt(self):
+        self.assertEqual(clean("Das ist z.B. wichtig."), "Das ist z.B. wichtig.")
+
+
 class Fragen(unittest.TestCase):
     def test_w_frage(self):
         self.assertEqual(clean("wann kommst du nach Hause."), "Wann kommst du nach Hause?")

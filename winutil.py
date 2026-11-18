@@ -94,3 +94,25 @@ def prevent_sleep(on: bool) -> None:
         kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
     except Exception:
         pass
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
+kernel32.GetTickCount.restype = wintypes.DWORD
+
+
+def idle_seconds() -> float:
+    """Wie lange keine Maus/Tastatur-Eingabe mehr kam."""
+    lii = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    if not user32.GetLastInputInfo(ctypes.byref(lii)):
+        return 0.0
+    return (kernel32.GetTickCount() - lii.dwTime) / 1000.0
+
+
+def monitor_off() -> None:
+    """Nur den Bildschirm ausschalten (OLED schonen) – System und Aufnahme laufen weiter.
+    PostMessage statt SendMessage: ein hängendes Fenster könnte uns sonst blockieren."""
+    HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER = 0xFFFF, 0x0112, 0xF170
+    user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)

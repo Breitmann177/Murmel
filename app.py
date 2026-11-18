@@ -11,6 +11,8 @@ import logging
 import threading
 import time
 
+import numpy as np
+
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -27,7 +29,7 @@ from audio import SR, Mic
 from hotkeys import PushToTalkHook
 from stt import STT
 from ui.widget import Pill
-from winutil import prevent_sleep, process_name, user32, window_title
+from winutil import idle_seconds, monitor_off, prevent_sleep, process_name, user32, window_title
 
 log = logging.getLogger("murmel")
 
@@ -57,6 +59,10 @@ class Controller(QObject):
         self.stt_lock = threading.Lock()     # Vorschau und finaler Durchlauf nie gleichzeitig
         self.preview_stt = None              # kleines Modell für die Live-Blase (nur GPU)
         self.preview_lock = threading.Lock()
+        # Freihand: lange Aufnahmen werden schon während des Sprechens in Häppchen erkannt
+        self._hf_lock = threading.Lock()
+        self._hf_gen = 0
+        self._hf_parts, self._hf_done, self._hf_lang = [], 0, "de"
         self._preview_gen = 0
         self.state = "idle"          # idle | recording | handsfree | processing
         self.target = None
@@ -80,6 +86,10 @@ class Controller(QObject):
 
         self.hf_timer = QTimer(self, singleShot=True)
         self.hf_timer.timeout.connect(self.finish)
+        # OLED: während einer Freihand-Aufnahme Bildschirm nach 1 min ohne Eingabe ausschalten
+        self.screen_timer = QTimer(self, interval=5000)
+        self.screen_timer.timeout.connect(self._check_screen)
+        self._screen_off = False
 
         self._build_tray()
         self.pill.show()
@@ -273,7 +283,10 @@ class Controller(QObject):
         if handsfree:
             self.state = "handsfree"
             self.pill.set_state("handsfree")
-            self.hf_timer.start(int(self.cfg["handsfree_max_s"] * 1000))
+            self.hf_timer.start(int(self.cfg.get("handsfree_limit_min", 240) * 60 * 1000))
+            self._start_chunker()
+            self._screen_off = False
+            self.screen_timer.start()
         else:
             self.state = "recording"
             self.pill.set_state("recording")
@@ -357,13 +370,27 @@ class Controller(QObject):
             self.pill.mark_copied()
 
     def _reset(self, pill_state, sound=True):
+        self.screen_timer.stop()
         self._stop_preview()
+        self._hf_gen += 1                 # Häppchen-Erkennung einer abgebrochenen Aufnahme stoppen
         prevent_sleep(False)
         self.mic.cancel()
         self.hook.swallow_esc = False
         self.hf_timer.stop()
         self.state = "idle"
         self.pill.set_state(pill_state)
+
+    def _check_screen(self):
+        limit = int(self.cfg.get("screen_off_s", 60))
+        if self.state != "handsfree" or limit <= 0:
+            return
+        idle = idle_seconds()
+        if idle < 5:
+            self._screen_off = False          # du hast die Maus bewegt -> Bildschirm ist wieder an
+        elif idle >= limit and not self._screen_off:
+            self._screen_off = True
+            monitor_off()
+            log.info("Bildschirm aus (OLED), Aufnahme läuft weiter")
 
     def toggle_pause(self):
         """Freihand-Aufnahme kurz anhalten (z. B. Zwischenfrage), Mitte der Pille antippen."""
@@ -375,7 +402,7 @@ class Controller(QObject):
         if on:
             self.hf_timer.stop()          # die 6-Minuten-Grenze zählt in der Pause nicht
         else:
-            left = self.cfg["handsfree_max_s"] - self.pill.elapsed()
+            left = self.cfg.get("handsfree_limit_min", 240) * 60 - self.pill.elapsed()
             self.hf_timer.start(int(max(1, left) * 1000))
 
     def cancel(self):
@@ -386,6 +413,12 @@ class Controller(QObject):
         if self.state not in ("recording", "handsfree", "command"):
             return
         mode = "command" if self.state == "command" else "dictate"
+        self.screen_timer.stop()
+        parts, done = None, 0
+        if self.state == "handsfree":
+            with self._hf_lock:          # ab jetzt nimmt die Häppchen-Schleife nichts mehr an
+                self._hf_gen += 1
+                parts, done = list(self._hf_parts), self._hf_done
         self._stop_preview()
         prevent_sleep(False)
         audio = self.mic.end()
@@ -395,9 +428,53 @@ class Controller(QObject):
         self.pill.set_state("processing")
         sounds.play("stop", self.cfg.get("sounds", True))
         t_release = time.perf_counter()
-        fn = self._process_command if mode == "command" else self._process
-        threading.Thread(target=fn, args=(audio, self.target, t_release),
-                         daemon=True, name="worker").start()
+        if mode == "command":
+            fn, args = self._process_command, (audio, self.target, t_release)
+        else:
+            fn, args = self._process, (audio, self.target, t_release, parts, done)
+        threading.Thread(target=fn, args=args, daemon=True, name="worker").start()
+
+    # ------------------------------------------------- Häppchen bei langer Aufnahme
+    def _start_chunker(self):
+        with self._hf_lock:
+            self._hf_gen += 1
+            self._hf_parts, self._hf_done, self._hf_lang = [], 0, "de"
+            gen = self._hf_gen
+        threading.Thread(target=self._chunk_loop, args=(gen,), daemon=True, name="chunker").start()
+
+    def _chunk_loop(self, gen):
+        """Alle ~25 s das fertige Stück erkennen (geschnitten an der leisesten Stelle, damit kein
+        Wort zerteilt wird). So ist nach 90 Minuten Vorlesung beim Stoppen fast alles schon fertig."""
+        hot = storage.hotwords() or None
+        while self._hf_gen == gen:
+            time.sleep(2)
+            audio = self.mic.snapshot()
+            start = self._hf_done
+            if len(audio) - start < 28 * SR:
+                continue
+            cut = self._quiet_cut(audio, start + 18 * SR, start + 27 * SR)
+            with self.stt_lock:
+                if self._hf_gen != gen:
+                    break
+                try:
+                    text, lang, _ = self.stt.transcribe(audio[start:cut], hot)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Häppchen: %s", e)
+                    continue
+            with self._hf_lock:
+                if self._hf_gen != gen:
+                    break
+                if text:
+                    self._hf_parts.append(text)
+                    self._hf_lang = lang
+                self._hf_done = cut
+
+    @staticmethod
+    def _quiet_cut(audio, a, b, frame=480):
+        seg = audio[a:b]
+        n = len(seg) // frame
+        rms = np.sqrt((seg[:n * frame].reshape(n, frame) ** 2).mean(axis=1))
+        return a + int(np.argmin(rms)) * frame + frame // 2
 
     # ------------------------------------------------------------ Verarbeiten
     def _shape_text(self, raw, lang, target):
@@ -450,14 +527,22 @@ class Controller(QObject):
         finally:
             self.bridge.result.emit(res)
 
-    def _process(self, audio, target, t_release):
+    def _process(self, audio, target, t_release, parts=None, done=0):
         res = {"ok": False}
         try:
             if len(audio) < SR * 0.25:
                 res["error"] = "Nichts verstanden"
                 return
-            with self.stt_lock:      # wartet höchstens auf eine laufende Vorschau (~0,3 s)
-                raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
+            if parts or done:           # lange Freihand-Aufnahme: nur noch der Rest fehlt
+                rest = audio[done:]
+                raw, lang, t_stt = "", self._hf_lang, 0.0
+                if len(rest) >= SR * 0.3:
+                    with self.stt_lock:
+                        raw, lang, t_stt = self.stt.transcribe(rest, storage.hotwords() or None)
+                raw = " ".join(p for p in parts + [raw] if p).strip()
+            else:
+                with self.stt_lock:      # wartet höchstens auf eine laufende Vorschau (~0,3 s)
+                    raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
             text, style = self._shape_text(raw, lang, target)
             if not text:
                 res["error"] = "Nichts verstanden"

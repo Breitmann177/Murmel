@@ -747,6 +747,10 @@ class MainWindow(QWidget):
         snd = Toggle(bool(c.get("sounds", True)))
         snd.toggled.connect(lambda v: self.setting_changed.emit("sounds", v))
         self._setting_row(g, "Sounds", "Leiser Ton beim Start und Ende der Aufnahme.", snd)
+        oled = Toggle(int(c.get("screen_off_s", 60)) > 0)
+        oled.toggled.connect(lambda v: self.setting_changed.emit("screen_off_s", 60 if v else 0))
+        self._setting_row(g, "Bildschirm aus bei Aufnahme", "Nach 1 Minute ohne Maus/Tastatur wird der Bildschirm "
+                                                            "schwarz (schont OLED) – die Aufnahme läuft weiter.", oled)
         th = Segmented([("light", "Hell"), ("dark", "Dunkel"), ("system", "System")], c.get("theme", "system"))
         th.changed.connect(lambda v: self.setting_changed.emit("theme", v))
         self._setting_row(g, "Design", None, th)
