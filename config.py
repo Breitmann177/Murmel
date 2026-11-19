@@ -1,10 +1,15 @@
-"""Einstellungen als JSON in %APPDATA%\\Murmel\\settings.json (atomar gespeichert)."""
+"""Einstellungen als JSON (atomar gespeichert):
+Windows: %APPDATA%\\Murmel\\settings.json   Linux: ~/.config/murmel/settings.json"""
 import json
 import os
+import sys
 from pathlib import Path
 
 APP_NAME = "Murmel"
-APP_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
+if sys.platform == "win32":
+    APP_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
+else:
+    APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "murmel"
 SETTINGS_PATH = APP_DIR / "settings.json"
 LOG_PATH = APP_DIR / "murmel.log"
 
@@ -15,7 +20,7 @@ DEFAULTS = {
     "model_cpu": "small",
     "beam_size": 1,                     # Diktat = kurze Clips -> Tempo vor Breitensuche
     "cleanup": "normal",                # off | normal | strong
-    "mic_device": None,                 # None = Windows-Standard
+    "mic_device": None,                 # None = System-Standard
     "min_press_s": 0.3,                 # kürzer = Versehen
     "double_tap_s": 0.45,               # zweimal tippen = Freihand
     "handsfree_limit_min": 240,         # Freihand: Sicherheitsgrenze (4 h), reicht für jede Vorlesung

@@ -1,9 +1,12 @@
 """Leise Start-/Stopp-Töne. Werden einmal als WAV erzeugt (keine Sounddateien nötig) und
-asynchron über winsound abgespielt – blockiert nichts, braucht kein Qt-Multimedia."""
+asynchron abgespielt (Windows: winsound, Linux: pw-play/paplay/aplay) – blockiert nichts,
+braucht kein Qt-Multimedia."""
 import math
+import shutil
 import struct
+import subprocess
+import sys
 import wave
-import winsound
 
 import config
 
@@ -42,6 +45,13 @@ def play(name, enabled=True):
     if not enabled:
         return
     try:
-        winsound.PlaySound(str(_path(name)), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        if sys.platform == "win32":
+            import winsound
+            winsound.PlaySound(str(_path(name)), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            return
+        player = next((p for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
+        if player:
+            args = [player, "-q", str(_path(name))] if player == "aplay" else [player, str(_path(name))]
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass

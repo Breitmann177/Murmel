@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame,
                                QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
+import osapi
 import storage
 import theme
 
@@ -30,8 +31,7 @@ def pretty_app(exe: str) -> str:
     return APP_NAMES.get(base, base[:1].upper() + base[1:])
 
 
-HOTKEYS = {"Strg + Win": ["ctrl", "win"], "Strg + Alt": ["ctrl", "alt"],
-           "Strg + Shift": ["ctrl", "shift"], "Rechte Strg": ["rctrl"]}
+HOTKEYS = {osapi.combo_text(k): k for k in (["ctrl", "win"], ["ctrl", "alt"], ["ctrl", "shift"], ["rctrl"])}
 
 
 # ====================================================================== Bausteine
@@ -731,9 +731,9 @@ class MainWindow(QWidget):
 
         g = self._group(lay, "Mikrofon")
         self.mic_combo = QComboBox()
-        self.mic_combo.addItem("Windows-Standard", None)
-        for idx, name in self.ctl.list_mics():
-            self.mic_combo.addItem(name, idx)
+        self.mic_combo.addItem(osapi.SYSTEM_DEFAULT_MIC, None)
+        for name in self.ctl.list_mics():
+            self.mic_combo.addItem(name, name)
         cur = self.mic_combo.findData(c.get("mic_device"))
         self.mic_combo.setCurrentIndex(max(0, cur))
         self.mic_combo.currentIndexChanged.connect(
@@ -749,7 +749,7 @@ class MainWindow(QWidget):
         g = self._group(lay, "Diktieren")
         hk = QComboBox()
         hk.addItems(list(HOTKEYS))
-        cur_name = next((k for k, v in HOTKEYS.items() if v == c.get("hotkey")), "Strg + Win")
+        cur_name = next((k for k, v in HOTKEYS.items() if v == c.get("hotkey")), next(iter(HOTKEYS)))
         hk.setCurrentText(cur_name)
         hk.currentTextChanged.connect(lambda t: self.setting_changed.emit("hotkey", HOTKEYS[t]))
         self._setting_row(g, "Tastenkürzel", "Halten zum Sprechen, doppelt tippen für Freihand.", hk)
@@ -777,6 +777,9 @@ class MainWindow(QWidget):
         snd = Toggle(bool(c.get("sounds", True)))
         snd.toggled.connect(lambda v: self.setting_changed.emit("sounds", v))
         self._setting_row(g, "Sounds", "Leiser Ton beim Start und Ende der Aufnahme.", snd)
+        auto = Toggle(bool(c.get("autostart", False)))
+        auto.toggled.connect(lambda v: self.setting_changed.emit("autostart", v))
+        self._setting_row(g, osapi.AUTOSTART_LABEL, "Murmel startet beim Anmelden im Tray.", auto)
         oled = Toggle(int(c.get("screen_off_s", 60)) > 0)
         oled.toggled.connect(lambda v: self.setting_changed.emit("screen_off_s", 60 if v else 0))
         self._setting_row(g, "Bildschirm automatisch aus", "Bei Aufnahme nach 1 Min. – schont OLED.", oled)
@@ -802,9 +805,9 @@ class MainWindow(QWidget):
         self.ollama_combo = QComboBox()
         self.ollama_combo.currentIndexChanged.connect(self._ollama_model_changed)
         self._setting_row(g, "Modell", None, self.ollama_combo)
-        self._setting_row(g, "Command Mode", "Text markieren, Strg + Win + Alt halten, Anweisung sprechen "
+        self._setting_row(g, "Command Mode", f"Text markieren, {osapi.combo_text(c.get('command_hotkey', ['ctrl', 'win', 'alt']))} halten, Anweisung sprechen "
                                              "(„mach das formeller“, „übersetz ins Englische“).",
-                          label("Strg + Win + Alt", "chip"), last=True)
+                          label(osapi.combo_text(c.get("command_hotkey", ["ctrl", "win", "alt"])), "chip"), last=True)
         lay.addStretch()
         return w
 
@@ -855,7 +858,8 @@ class MainWindow(QWidget):
         h = getattr(self, "_hints", {}).get("Erkennung")
         if h:
             h.setText("Läuft auf der Grafikkarte – schnell." if gpu else
-                      "Läuft auf dem Prozessor. Für < 1,5 s die GPU in Armoury Crate auf „Standard“ stellen.")
+                      "Läuft auf dem Prozessor. Schneller geht es mit einer aktiven NVIDIA-GPU "
+                      "(ASUS: GPU-Modus „Standard“ in Armoury Crate bzw. G-Helper).")
 
     def _tick_level(self):
         import math

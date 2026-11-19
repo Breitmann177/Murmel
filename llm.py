@@ -12,13 +12,14 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.request
 
 log = logging.getLogger("murmel.llm")
 URL = "http://127.0.0.1:11434"
-EXE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
+DEFAULT_EXE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
 PREFERRED = ("qwen3.5:4b", "qwen3:4b", "llama3.2:3b", "gemma3:4b", "qwen2.5:3b", "phi4-mini", "qwen3:8b")
 
 CLEAN_PROMPT = (
@@ -34,8 +35,16 @@ COMMAND_PROMPT = (
 )
 
 
+def exe():
+    """ollama finden: Windows-Standardordner, sonst PATH (eigener Ordner, winget, scoop, Linux)."""
+    if os.name == "nt" and os.path.exists(DEFAULT_EXE):
+        return DEFAULT_EXE
+    return shutil.which("ollama")
+
+
 def installed() -> bool:
-    return os.path.exists(EXE)
+    # Läuft Ollama als Dienst oder in Docker, gibt es evtl. keine exe – dann zählt, dass es antwortet
+    return bool(exe()) or running()
 
 
 def _req(path, payload=None, timeout=2.0):
@@ -58,11 +67,16 @@ def ensure_running(wait=6.0) -> bool:
     """Ollama ist installiert, läuft aber nicht? Dann unsichtbar im Hintergrund starten."""
     if running():
         return True
-    if not installed():
+    path = exe()
+    if not path:
         return False
     try:
-        subprocess.Popen([EXE, "serve"], creationflags=0x08000000 | 0x00000008,   # kein Fenster, losgelöst
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.name == "nt":
+            subprocess.Popen([path, "serve"], creationflags=0x08000000 | 0x00000008,   # kein Fenster, losgelöst
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen([path, "serve"], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         log.warning("Ollama-Start fehlgeschlagen: %s", e)
         return False
@@ -77,16 +91,20 @@ def ensure_running(wait=6.0) -> bool:
 def local_models() -> list:
     """Modelle direkt von der Festplatte lesen – klappt auch, wenn Ollama gerade nicht läuft
     (vorher war die Modellauswahl deshalb ausgegraut)."""
-    base = os.path.join(os.path.expanduser("~"), ".ollama", "models", "manifests", "registry.ollama.ai")
-    out = []
-    try:
-        for ns in os.listdir(base):                      # meist "library"
-            for name in os.listdir(os.path.join(base, ns)):
-                for tag in os.listdir(os.path.join(base, ns, name)):
-                    full = f"{name}:{tag}" if ns == "library" else f"{ns}/{name}:{tag}"
-                    out.append(full)
-    except Exception:
-        pass
+    roots = [os.path.expanduser("~/.ollama/models"),
+             os.environ.get("OLLAMA_MODELS", ""),
+             "/usr/share/ollama/.ollama/models",            # Linux-Dienst (Installer von ollama.com)
+             "/var/lib/ollama/.ollama/models", "/var/lib/ollama/models"]
+    out = set()
+    for root in filter(None, roots):
+        base = os.path.join(root, "manifests", "registry.ollama.ai")
+        try:
+            for ns in os.listdir(base):                      # meist "library"
+                for name in os.listdir(os.path.join(base, ns)):
+                    for tag in os.listdir(os.path.join(base, ns, name)):
+                        out.add(f"{name}:{tag}" if ns == "library" else f"{ns}/{name}:{tag}")
+        except Exception:
+            pass
     return sorted(out)
 
 

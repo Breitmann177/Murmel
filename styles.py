@@ -17,8 +17,15 @@ DEFAULT_APPS = {
     "signal": "casual", "ms-teams": "casual",
     "code": "code", "cursor": "code", "windowsterminal": "code", "powershell": "code",
     "pwsh": "code", "cmd": "code", "pycharm64": "code", "idea64": "code", "devenv": "code",
+    # Linux (Namen aus der Barrierefreiheits-Schnittstelle bzw. dem Programmnamen)
+    "evolution": "formal", "geary": "formal", "libreoffice": "formal", "soffice": "formal",
+    "telegram-desktop": "casual", "signal-desktop": "casual", "element": "casual",
+    "codium": "code", "code-oss": "code", "zed": "code", "ptyxis": "code", "gnome-terminal-server": "code",
+    "kgx": "code", "konsole": "code", "kitty": "code", "alacritty": "code", "wezterm-gui": "code",
+    "foot": "code", "ghostty": "code", "tilix": "code", "pycharm": "code", "idea": "code",
 }
-BROWSERS = {"chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "arc"}
+BROWSERS = {"chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "arc",
+            "chromium", "google-chrome", "brave-browser", "microsoft-edge", "librewolf", "zen"}
 TITLE_RULES = (("gmail", "formal"), ("outlook", "formal"), ("whatsapp", "casual"),
                ("discord", "casual"), ("slack", "casual"), ("telegram", "casual"),
                ("github", "code"), ("chatgpt", "standard"), ("claude", "standard"))

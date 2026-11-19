@@ -1,0 +1,4 @@
+# Nur mit NVIDIA-Grafikkarte: CUDA-Bibliotheken als pip-Pakete (~1,5 GB)
+-r requirements.txt
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

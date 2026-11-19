@@ -11,13 +11,17 @@ Technik-Entscheidungen:
 import ctypes
 import math
 import random
+import sys
 import time
 
 from PySide6.QtCore import (QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer,
                             Property, QParallelAnimationGroup, Signal)
-from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPainterPath,
-                           QPen, QPixmap)
+from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QImage, QPainter,
+                           QPainterPath, QPen, QPixmap, QRegion)
 from PySide6.QtWidgets import QWidget
+
+import osapi
+import theme
 
 WIN_W, WIN_H = 520, 196         # festes (unsichtbares) Fenster: Pille unten, Text-Blase darüber
 BOTTOM_GAP = 12                 # Abstand der Pille zur Taskleiste
@@ -64,7 +68,7 @@ class Pill(QWidget):
 
         self.state = "loading"
         self.message = ""
-        self.hint = "Strg + Win halten"
+        self.hint = osapi.combo_text(["ctrl", "win"])
         self._w, self._h = SIZES["loading"]
         self._hovered = False
         self._bars = [0.0] * BARS
@@ -107,6 +111,10 @@ class Pill(QWidget):
         self._logo = None
         self.colors = {"pill": "#121214", "pill_fg": "#F2F2F2", "line": "#2A2A2A", "hover": "#262626"}
         self.icon_family = "Segoe Fluent Icons"
+        # Linux hat die Windows-Symbolschrift nicht -> Lucide-Icons bzw. selbst gezeichnete Formen
+        self.glyphs = self.icon_family in QFontDatabase.families()
+        # X11/XWayland: durchsichtige Pixel fangen trotzdem Klicks -> Fenster auf die Pille zuschneiden
+        self._use_mask = sys.platform != "win32"
 
         self.place()
 
@@ -140,6 +148,7 @@ class Pill(QWidget):
 
     def _set_w(self, v):
         self._w = v
+        self._update_mask()
         self.update()
 
     def _get_h(self):
@@ -147,7 +156,17 @@ class Pill(QWidget):
 
     def _set_h(self, v):
         self._h = v
+        self._update_mask()
         self.update()
+
+    def _update_mask(self):
+        if not self._use_mask:
+            return
+        r = self.pill_rect().adjusted(-26, -14, 26, 10).toAlignedRect()
+        region = QRegion(r)
+        if self._bubble_a > 0 or self._bubble_target > 0:     # Live-Text-Blase über der Pille
+            region = region.united(QRegion(16, 0, WIN_W - 32, max(0, r.top())))
+        self.setMask(region)
 
     pillW = Property(float, _get_w, _set_w)
     pillH = Property(float, _get_h, _set_h)
@@ -155,6 +174,7 @@ class Pill(QWidget):
     # ------------------------------------------------------------ Fenster
     def showEvent(self, e):
         super().showEvent(e)
+        self._update_mask()
         try:   # WS_EX_NOACTIVATE + TOOLWINDOW zusätzlich auf Win32-Ebene setzen
             hwnd = int(self.winId())
             u = ctypes.windll.user32
@@ -221,6 +241,7 @@ class Pill(QWidget):
         if text:
             self._bubble_text = text
         self._bubble_target = 1.0 if text else 0.0
+        self._update_mask()
         self._ensure_timer()
 
     def set_progress(self, p):
@@ -253,6 +274,8 @@ class Pill(QWidget):
             step = 0.12 if self._bubble_target > self._bubble_a else 0.2
             self._bubble_a = min(1.0, self._bubble_a + step) if self._bubble_target > self._bubble_a \
                 else max(0.0, self._bubble_a - step)
+            if self._bubble_a == 0.0:
+                self._update_mask()                              # Blase weg -> Klickbereich wieder klein
         if self.state in ("recording", "handsfree", "command"):
             self._update_bars()
         self.update()
@@ -412,11 +435,15 @@ class Pill(QWidget):
             self._text(p, r, self.hint, 11, QColor(255, 255, 255, 210))
         elif self.state == "command":
             self._paint_bars(p, r, QColor("#D8CAF7"))
-            f = QFont(self.icon_family, 11)
-            f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
-            p.setFont(f)
-            p.setPen(QColor("#D8CAF7"))
-            p.drawText(QRectF(r.left() + 8, r.top(), 26, r.height()), Qt.AlignCenter, "\uE945")  # Sparkle
+            if self.glyphs:
+                f = QFont(self.icon_family, 11)
+                f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
+                p.setFont(f)
+                p.setPen(QColor("#D8CAF7"))
+                p.drawText(QRectF(r.left() + 8, r.top(), 26, r.height()), Qt.AlignCenter, "\uE945")  # Sparkle
+            else:
+                pm = theme.icon_pixmap("sparkles", "#D8CAF7", 15, self.devicePixelRatioF())
+                p.drawPixmap(QPointF(r.left() + 13, r.center().y() - 7.5), pm)
         elif self.state == "handsfree" and r.width() < 140:
             self._paint_mini(p, r)
         elif self.state in ("recording", "handsfree"):
@@ -524,6 +551,15 @@ class Pill(QWidget):
                 p.drawPolyline([QPointF(x - 2.2, cy - 1.6 * d), QPointF(x, cy + 1.6 * d), QPointF(x + 2.2, cy - 1.6 * d)])
                 p.setFont(f)
                 continue
+            if not self.glyphs:
+                if name == "record":                     # roter Aufnahmepunkt
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(QColor("#FF453A"))
+                    p.drawEllipse(QPointF(x, cy), 6.5, 6.5)
+                else:
+                    pm = theme.icon_pixmap("settings", c["pill_fg"], 19, self.devicePixelRatioF())
+                    p.drawPixmap(QPointF(x - 9.5, cy - 9.5), pm)
+                continue
             glyph = GLYPHS[name]
             color = QColor(c["pill_fg"])
             if name == "record":
@@ -575,7 +611,7 @@ class Pill(QWidget):
             p.drawText(row.adjusted(28, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
 
     def _text(self, p, r, s, size, color):
-        f = QFont("Segoe UI", size)
+        f = QFont(theme.SANS, size)
         f.setWeight(QFont.Medium)
         p.setFont(f)
         p.setPen(color)
@@ -615,7 +651,7 @@ class Pill(QWidget):
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
         secs = int(self.elapsed())
-        f = QFont("Segoe UI", 9)
+        f = QFont(theme.SANS, 9)
         p.setFont(f)
         p.setPen(QColor(255, 255, 255, 150))
         p.drawText(QRectF(r.left() + 36, r.top(), 40, r.height()), Qt.AlignVCenter | Qt.AlignLeft,

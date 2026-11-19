@@ -6,6 +6,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (QComboBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
                                QPlainTextEdit, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
+import osapi
 import theme
 
 
@@ -94,9 +95,9 @@ class Onboarding(QWidget):
         l.addWidget(_label("Sag etwas – der Balken sollte sich bewegen.", "sub"))
         l.addSpacing(16)
         self.mic_combo = QComboBox()
-        self.mic_combo.addItem("Windows-Standard", None)
-        for idx, name in self.ctl.list_mics():
-            self.mic_combo.addItem(name, idx)
+        self.mic_combo.addItem(osapi.SYSTEM_DEFAULT_MIC, None)
+        for name in self.ctl.list_mics():
+            self.mic_combo.addItem(name, name)
         self.mic_combo.setCurrentIndex(max(0, self.mic_combo.findData(self.ctl.cfg.get("mic_device"))))
         self.mic_combo.currentIndexChanged.connect(
             lambda _: self.ctl.change_setting("mic_device", self.mic_combo.currentData()))
@@ -130,7 +131,7 @@ class Onboarding(QWidget):
     def _try(self):
         w, l = self._page()
         l.addWidget(_label("Probier's aus", "h1"))
-        l.addWidget(_label("Klick ins Feld, halte Strg + Win und sag zum Beispiel: "
+        l.addWidget(_label(f"Klick ins Feld, halte {osapi.combo_text(self.ctl.cfg['hotkey'])} und sag zum Beispiel: "
                            "„Hallo Murmel, das ist mein erstes Diktat.“", "sub"))
         l.addSpacing(10)
         self.try_box = QPlainTextEdit()
@@ -151,7 +152,7 @@ class Onboarding(QWidget):
         l.addWidget(logo)
         l.addWidget(_label("Fertig!", "h1"))
         l.addWidget(_label("Die kleine Pille unten wartet auf dich. Fahr mit der Maus drüber für Optionen, "
-                           "zweimal Strg + Win tippen startet den Freihand-Modus. Murmel läuft im Tray weiter.",
+                           f"zweimal {osapi.combo_text(self.ctl.cfg['hotkey'])} tippen startet den Freihand-Modus. Murmel läuft im Tray weiter.",
                            "sub"))
         l.addStretch()
         return w
