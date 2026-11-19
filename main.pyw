@@ -1,4 +1,9 @@
-"""Murmel starten. Nur eine Instanz (zwei Hooks + zweimal das Modell im Speicher wären Murks)."""
+"""Murmel starten. Nur eine Instanz (zwei Hooks + zweimal das Modell im Speicher wären Murks).
+
+Wichtig: Alles, was die App startet, steht unter `if __name__ == "__main__":`. Der Erkennungs-
+Worker (stt_worker.py) ist ein eigener Prozess; Windows startet ihn per "spawn" und lädt dabei
+diese Datei noch einmal – ohne den Schutz würde der Worker eine zweite Murmel-App starten.
+"""
 import ctypes
 import logging
 import os
@@ -11,29 +16,36 @@ os.chdir(HERE)
 
 import config  # noqa: E402
 
-config.APP_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(filename=config.LOG_PATH, level=logging.INFO, encoding="utf-8",
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-# Benannter Mutex: existiert er schon, läuft Murmel bereits
-_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\MurmelSingleInstance")
-if ctypes.windll.kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
-    sys.exit(0)
+def main():
+    config.APP_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(filename=config.LOG_PATH, level=logging.INFO, encoding="utf-8",
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Murmel.Dictation")
-except Exception:
-    pass
+    # Benannter Mutex: existiert er schon, läuft Murmel bereits
+    global _mutex
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\MurmelSingleInstance")
+    if ctypes.windll.kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
+        sys.exit(0)
 
-try:
-    from PySide6.QtWidgets import QApplication
-    from app import Controller
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Murmel.Dictation")
+    except Exception:
+        pass
 
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)    # läuft im Tray weiter
-    ctl = Controller(app)
-    sys.exit(app.exec())
-except Exception:
-    logging.exception("Absturz")
-    ctypes.windll.user32.MessageBoxW(None, f"Murmel ist abgestürzt.\n{config.LOG_PATH}\n\n"
-                                     f"{traceback.format_exc()[-600:]}", "Murmel", 0x10)
+    try:
+        from PySide6.QtWidgets import QApplication
+        from app import Controller
+
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(False)    # läuft im Tray weiter
+        ctl = Controller(app)  # noqa: F841
+        sys.exit(app.exec())
+    except Exception:
+        logging.exception("Absturz")
+        ctypes.windll.user32.MessageBoxW(None, f"Murmel ist abgestürzt.\n{config.LOG_PATH}\n\n"
+                                         f"{traceback.format_exc()[-600:]}", "Murmel", 0x10)
+
+
+if __name__ == "__main__":
+    main()

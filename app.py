@@ -27,7 +27,7 @@ import styles
 import theme
 from audio import SR, Mic
 from hotkeys import PushToTalkHook
-from stt import STT
+from stt_worker import STTProxy
 from ui.widget import Pill
 from winutil import idle_seconds, monitor_off, prevent_sleep, process_name, user32, window_title
 
@@ -40,6 +40,7 @@ class Bridge(QObject):
     load_failed = Signal(str)
     result = Signal(dict)
     partial = Signal(str)        # Live-Vorschau
+    engine = Signal(str, str)    # Erkennung lief neu an (z. B. GPU -> CPU)
 
 
 class Controller(QObject):
@@ -50,14 +51,15 @@ class Controller(QObject):
         theme.load_fonts()
         self.bridge = Bridge()
         self.mic = Mic(self.cfg.get("mic_device"))
-        self.stt = STT(self.cfg)
+        # Modell läuft in eigenem Prozess (GPU-Wechsel reißt Murmel sonst mit, siehe stt_worker.py)
+        self.stt = STTProxy(self.cfg, config.LOG_PATH,
+                            on_change=lambda dev, name: self.bridge.engine.emit(dev, name))
         self.pill = Pill(level_source=lambda: self.mic.level)
         self.pill.set_theme(theme.tokens(self.cfg.get("theme", "system")))
         self.window = None
         self.engine_text, self.engine_gpu = "lädt …", False
         self.ready = False
         self.stt_lock = threading.Lock()     # Vorschau und finaler Durchlauf nie gleichzeitig
-        self.preview_stt = None              # kleines Modell für die Live-Blase (nur GPU)
         self.preview_lock = threading.Lock()
         # Freihand: lange Aufnahmen werden schon während des Sprechens in Häppchen erkannt
         self._hf_lock = threading.Lock()
@@ -74,6 +76,11 @@ class Controller(QObject):
         b.loaded.connect(self.on_loaded)
         b.load_failed.connect(lambda m: self.pill.set_state("error", m, 6000))
         b.result.connect(self.on_result)
+        b.engine.connect(self.on_engine)
+        self._gpu_switching = False
+        self.gpu_timer = QTimer(self, interval=30000)
+        self.gpu_timer.timeout.connect(self._check_gpu)
+        self.gpu_timer.start()
         b.partial.connect(lambda t: self.pill.set_preview(t) if self.state in ("recording", "handsfree") else None)
         self.pill.cancel_clicked.connect(self.cancel)
         self.pill.finish_clicked.connect(self.finish)
@@ -208,9 +215,11 @@ class Controller(QObject):
             self._start_mic()
         elif key == "theme":
             self.apply_theme()
-        elif key == "language" and key in ("language",):
+        elif key == "language":
             for k, a in self.lang_actions.items():
                 a.setChecked(k == value)
+        if key in ("language", "beam_size"):
+            self.stt.update_cfg({key: value})       # Worker-Prozess hat eine eigene Kopie
         if self.window and key == "name":
             self.window.refresh()
 
@@ -218,12 +227,41 @@ class Controller(QObject):
     def _load(self):
         try:
             self.stt.load()
-            self._load_preview_model()
             gpu = self.stt.device == "cuda"
             self.bridge.loaded.emit(f"{self.stt.model_name} · {'GPU' if gpu else 'CPU'}", gpu)
         except Exception:  # noqa: BLE001
             log.exception("Modell")
             self.bridge.load_failed.emit("Modell nicht ladbar")
+
+    def on_engine(self, device, name):
+        """Worker (neu) gestartet – z. B. nach GPU-Wegfall auf CPU oder zurück auf GPU."""
+        gpu = device == "cuda"
+        info = f"{name} · {'GPU' if gpu else 'CPU'}"
+        if not self.ready:
+            return                              # erster Start: on_loaded übernimmt
+        self.engine_text, self.engine_gpu = info, gpu
+        self.tray.setToolTip(f"Murmel – bereit ({info})")
+        if self.window:
+            self.window.set_status(info)
+            self.window.set_engine(info, gpu)
+        log.info("Erkennung jetzt: %s", info)
+
+    def _check_gpu(self):
+        """Alle 30 s im Leerlauf: Läuft Murmel auf der CPU, ist die GPU aber wieder da? Dann wechseln."""
+        if not self.ready or self.state != "idle" or self.stt.device != "cpu" or self._gpu_switching:
+            return
+
+        def work():
+            self._gpu_switching = True
+            try:
+                if self.stt.cuda_available() and self.state == "idle":
+                    log.info("GPU wieder da – wechsle")
+                    self.stt.restart()
+            except Exception as e:  # noqa: BLE001
+                log.warning("GPU-Wechsel: %s", e)
+            finally:
+                self._gpu_switching = False
+        threading.Thread(target=work, daemon=True, name="gpu-check").start()
 
     def on_loaded(self, info, gpu):
         self.ready = True
@@ -312,39 +350,24 @@ class Controller(QObject):
     def _preview_loop(self, gen):
         last_len = 0
         hot = storage.hotwords() or None
-        model = self.preview_stt or self.stt
-        lock = self.preview_lock if self.preview_stt else self.stt_lock
+        which = "preview" if self.stt.has_preview else "main"
         while self._preview_gen == gen:
-            time.sleep(0.25 if self.preview_stt else 0.4)
+            time.sleep(0.25 if self.stt.has_preview else 0.4)
             audio = self.mic.snapshot()
             # erst ab 0,7 s und nur, wenn seit dem letzten Mal genug Neues dazukam
             if len(audio) < SR * 0.5 or len(audio) - last_len < SR * 0.2:
                 continue
             last_len = len(audio)
             tail = audio[-25 * SR:]          # lange Freihand-Aufnahmen: nur das Ende zeigen
-            with lock:
-                if self._preview_gen != gen:
+            with self.preview_lock:
+                if self._preview_gen != gen or self.stt.device != "cuda":
                     break
                 try:
-                    text, lang, _ = model.transcribe(tail, hot)
+                    text, lang, _ = self.stt.transcribe(tail, hot, which=which)
                 except Exception:  # noqa: BLE001
                     continue
             if self._preview_gen == gen and text:
                 self.bridge.partial.emit(cleanup.clean(text, lang, "normal"))
-
-    def _load_preview_model(self):
-        """Eigenes kleines Modell nur für die Vorschau-Blase (~4× schneller als das große).
-        Eingefügt wird weiterhin der Text vom großen Modell – die Vorschau ist nur zum Mitlesen.
-        Eigenes Modell + eigene Sperre: der finale Durchlauf muss nie auf die Vorschau warten."""
-        if self.stt.device != "cuda":
-            return
-        try:
-            p = STT({**self.cfg, "model_gpu": "small"})
-            p.load()
-            if p.device == "cuda":
-                self.preview_stt = p
-        except Exception as e:  # noqa: BLE001
-            log.warning("Vorschau-Modell: %s", e)
 
     def _warm_ollama(self):
         """Stark-Modus: Sprachmodell schon beim Drücken in den Grafikspeicher laden, damit die
@@ -578,6 +601,7 @@ class Controller(QObject):
     # ---------------------------------------------------------------- Ende
     def quit(self):
         prevent_sleep(False)
+        self.stt.stop()
         self.hook.stop()
         self.mic.close()
         self.tray.hide()
