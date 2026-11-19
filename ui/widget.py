@@ -38,7 +38,7 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
 
 
 # Knöpfe im aufgeklappten Zustand: Abstand von der Mitte (wie bei NoTime)
-SLOTS = {"src": -45, "record": -58, "logo": 0, "settings": 56}   # "src" = dünner Pfeil: Tonquelle
+SLOTS = {"src": -40, "record": -58, "logo": 0, "settings": 56}   # "src" = dünner Pfeil: Tonquelle
 SLOT_R = {"src": 6}                                                # Trefferradius (Standard 17)
 SOURCES = (("mic", "Mikrofon"), ("system", "Laptop-Ton"), ("both", "Beides"))
 GLYPHS = {"settings": "\uE713", "record": "\uE7C8"}
@@ -498,22 +498,29 @@ class Pill(QWidget):
         p.setFont(f)
         for name, dx in SLOTS.items():
             x = cx + dx
-            if name == self._hover_slot:
+            if name == self._hover_slot and name != "src":
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(c["hover"]))
-                rr = 8 if name == "src" else 17
-                p.drawEllipse(QPointF(x, cy), rr, rr)
+                p.drawEllipse(QPointF(x, cy), 17, 17)
             if name == "logo":
                 pm = self._logo_pixmap()
                 p.drawPixmap(QPointF(x - 14, cy - 14), pm)
                 continue
-            if name == "src":               # dünner Pfeil nach oben (nach unten, wenn offen)
+            if name == "src":               # schmale, hochkante Kapsel mit Pfeil (Tonquelle)
+                active = name == self._hover_slot or self._picker
+                cap = QRectF(x - 6, cy - 12, 12, 24)
+                bg = QColor(c["hover"])
+                if not active:
+                    bg.setAlpha(150)
+                p.setPen(Qt.NoPen)
+                p.setBrush(bg)
+                p.drawRoundedRect(cap, 6, 6)
                 col = QColor(c["pill_fg"])
-                col.setAlpha(235 if name == self._hover_slot or self._picker else 150)
-                p.setPen(QPen(col, 1.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))   # schmal & hochkant
+                col.setAlpha(235 if active else 170)
+                p.setPen(QPen(col, 1.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
                 p.setBrush(Qt.NoBrush)
                 d = 1 if self._picker else -1
-                p.drawPolyline([QPointF(x - 2, cy - 2.6 * d), QPointF(x, cy + 2.6 * d), QPointF(x + 2, cy - 2.6 * d)])
+                p.drawPolyline([QPointF(x - 2.2, cy - 1.6 * d), QPointF(x, cy + 1.6 * d), QPointF(x + 2.2, cy - 1.6 * d)])
                 p.setFont(f)
                 continue
             glyph = GLYPHS[name]
