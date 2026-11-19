@@ -780,6 +780,12 @@ class MainWindow(QWidget):
         oled = Toggle(int(c.get("screen_off_s", 60)) > 0)
         oled.toggled.connect(lambda v: self.setting_changed.emit("screen_off_s", 60 if v else 0))
         self._setting_row(g, "Bildschirm automatisch aus", "Bei Aufnahme nach 1 Min. – schont OLED.", oled)
+        recdir = QPushButton("Ändern")
+        recdir.setObjectName("ghost")
+        recdir.setCursor(Qt.PointingHandCursor)
+        recdir.clicked.connect(self._choose_rec_dir)
+        self._setting_row(g, "Speicherort für Aufnahmen", self.ctl._rec_dir().as_posix()
+                          if hasattr(self.ctl, "_rec_dir") else "", recdir)
         th = Segmented([("light", "Hell"), ("dark", "Dunkel"), ("system", "System")], c.get("theme", "system"))
         th.changed.connect(lambda v: self.setting_changed.emit("theme", v))
         self._setting_row(g, "Design", None, th)
@@ -801,6 +807,16 @@ class MainWindow(QWidget):
                           label("Strg + Win + Alt", "chip"), last=True)
         lay.addStretch()
         return w
+
+    def _choose_rec_dir(self):
+        from PySide6.QtWidgets import QFileDialog
+        cur = self.ctl._rec_dir() if hasattr(self.ctl, "_rec_dir") else None
+        d = QFileDialog.getExistingDirectory(self, "Speicherort für Aufnahmen", str(cur or ""))
+        if d:
+            self.setting_changed.emit("rec_dir", d)
+            h = getattr(self, "_hints", {}).get("Speicherort für Aufnahmen")
+            if h:
+                h.setText(d)
 
     def _refresh_settings(self):
         """Ollama-Status im Hintergrund prüfen (HTTP darf das UI nicht blockieren)."""

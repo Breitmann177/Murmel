@@ -3,6 +3,7 @@ sounddevice>=0.5
 numpy>=2.0
 PySide6-Essentials>=6.8
 psutil>=6.0
+PyAudioWPatch>=0.2; sys_platform == "win32"   # Laptop-Ton (WASAPI-Loopback)
 # GPU (RTX 5070): CUDA-Bibliotheken als pip-Pakete
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*

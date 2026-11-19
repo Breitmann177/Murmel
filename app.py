@@ -88,6 +88,9 @@ class Controller(QObject):
         self.pill.open_window.connect(self.open_window)
         self.pill.start_handsfree.connect(self.start_handsfree)
         self.pill.copy_last.connect(self.copy_last)
+        self.pill.rec_source = self.cfg.get("rec_source", "mic")
+        self.pill.source_changed.connect(lambda v: self.change_setting("rec_source", v))
+        self._lecture_path = None        # Aufnahme über ● -> wird als .txt gespeichert
         # System-Theme gewechselt (bei "System")? -> neu einfärben
         QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _: self.apply_theme())
 
@@ -310,11 +313,14 @@ class Controller(QObject):
             if self.state in ("recording", "handsfree", "command"):
                 self.cancel()
 
-    def _begin(self, target, handsfree):
+    def _begin(self, target, handsfree, lecture=False):
         # Ziel-Fenster JETZT merken – beim Loslassen könnte schon ein anderes vorne sein
         self.target = target
         self.t_press = time.monotonic()
-        self.mic.begin()
+        source = self.cfg.get("rec_source", "mic") if lecture else "mic"
+        if not self.mic.begin(source):
+            log.warning("Laptop-Ton nicht verfügbar – nehme nur das Mikrofon")
+        self._lecture_path = self._new_lecture_path() if lecture else None
         prevent_sleep(True)
         self.hook.swallow_esc = True
         sounds.play("start", self.cfg.get("sounds", True))
@@ -384,7 +390,7 @@ class Controller(QObject):
         """Klick auf ● in der Pille. Die Pille aktiviert sich nie, also ist das Vordergrund-
         fenster immer noch deine App – genau dorthin kommt der Text."""
         if self.state == "idle" and self.ready:
-            self._begin(user32.GetForegroundWindow(), True)
+            self._begin(user32.GetForegroundWindow(), True, lecture=True)
 
     def copy_last(self):
         rows = storage.history(limit=1)
@@ -454,7 +460,8 @@ class Controller(QObject):
         if mode == "command":
             fn, args = self._process_command, (audio, self.target, t_release)
         else:
-            fn, args = self._process, (audio, self.target, t_release, parts, done)
+            fn, args = self._process, (audio, self.target, t_release, parts, done, self._lecture_path)
+            self._lecture_path = None
         threading.Thread(target=fn, args=args, daemon=True, name="worker").start()
 
     # ------------------------------------------------- Häppchen bei langer Aufnahme
@@ -489,6 +496,8 @@ class Controller(QObject):
                     break
                 if text:
                     self._hf_parts.append(text)
+                    if self._lecture_path:
+                        self._write_lecture(self._lecture_path, list(self._hf_parts), self._hf_lang)
                     self._hf_lang = lang
                 self._hf_done = cut
 
@@ -550,7 +559,41 @@ class Controller(QObject):
         finally:
             self.bridge.result.emit(res)
 
-    def _process(self, audio, target, t_release, parts=None, done=0):
+    # ---------------------------------------------------------- Aufnahme-Datei
+    def _rec_dir(self):
+        from pathlib import Path
+        d = self.cfg.get("rec_dir") or ""
+        if d:
+            return Path(d)
+        for desk in (Path.home() / "Desktop", Path.home() / "OneDrive" / "Desktop"):
+            if (desk / "1. Semester").exists():
+                return desk / "1. Semester"
+        return Path.home() / "Documents" / "Murmel"
+
+    def _new_lecture_path(self):
+        from datetime import datetime
+        d = self._rec_dir()
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            return None
+        return d / f"{datetime.now():%Y-%m-%d %H-%M} Aufnahme.txt"
+
+    @staticmethod
+    def _write_lecture(path, parts, lang):
+        """Häppchen als Absätze speichern – atomar über .tmp, damit nach einem Absturz immer
+        eine lesbare Datei mit allem bis dahin Erkannten bleibt."""
+        text = "\n\n".join(t for t in (cleanup.clean(p, lang, "normal") for p in parts) if t)
+        if not text:
+            return
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(text + "\n", encoding="utf-8")
+            tmp.replace(path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Aufnahme speichern: %s", e)
+
+    def _process(self, audio, target, t_release, parts=None, done=0, lecture=None):
         res = {"ok": False}
         try:
             if len(audio) < SR * 0.25:
@@ -562,10 +605,27 @@ class Controller(QObject):
                 if len(rest) >= SR * 0.3:
                     with self.stt_lock:
                         raw, lang, t_stt = self.stt.transcribe(rest, storage.hotwords() or None)
-                raw = " ".join(p for p in parts + [raw] if p).strip()
+                if raw:
+                    parts = parts + [raw]
+                raw = " ".join(p for p in parts if p).strip()
             else:
                 with self.stt_lock:      # wartet höchstens auf eine laufende Vorschau (~0,3 s)
                     raw, lang, t_stt = self.stt.transcribe(audio, storage.hotwords() or None)
+            if lecture:                 # Aufnahme über ●: als Datei speichern statt einfügen
+                if len(audio) < SR * 5 or not raw:
+                    try:
+                        lecture.unlink(missing_ok=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    res["error"] = "Zu kurz – nicht gespeichert"
+                    return
+                self._write_lecture(lecture, parts if parts else [raw], lang)
+                text = lecture.read_text(encoding="utf-8").strip()
+                total = time.perf_counter() - t_release
+                storage.add_history("Aufnahme", raw, text, lang, len(audio) / SR, total)
+                log.info("Aufnahme gespeichert (%.0f s Audio, %.1f s bis fertig)", len(audio) / SR, total)
+                res.update(ok=True, mode="saved", text=text, file=str(lecture))
+                return
             text, style = self._shape_text(raw, lang, target)
             if not text:
                 res["error"] = "Nichts verstanden"
@@ -591,6 +651,9 @@ class Controller(QObject):
         self.state = "idle"
         if not res.get("ok"):
             self.pill.set_state("error", res.get("error", "Fehler"), 3000)
+        elif res.get("mode") == "saved":
+            self.pill.set_state("done", hold_ms=1200)
+            self.tray.showMessage("Murmel", "Aufnahme gespeichert", self.tray.icon(), 2500)
         elif res.get("mode") == "clipboard":
             self.pill.set_state("error", "In der Zwischenablage", 2200)
         else:

@@ -29,6 +29,8 @@ DEFAULTS = {
     "onboarded": False,
     "live_preview": True,               # Text-Blase beim Sprechen (nur mit GPU)
     "autostart": False,
+    "rec_source": "mic",                # Aufnahme über ● in der Pille: mic | system | both
+    "rec_dir": "",                      # Speicherort für Aufnahmen ("" = Desktop\1. Semester)
     "screen_off_s": 60,                 # Freihand: Bildschirm nach 1 min ohne Eingabe aus (OLED), 0 = aus
 }
 

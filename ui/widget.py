@@ -26,7 +26,7 @@ BARS = 12
 SIZES = {                        # (Breite, Höhe) der Pille je Zustand
     "loading": (96, 10),
     "idle": (40, 8),
-    "hover": (166, 46),          # aufgeklappt: Aufnahme · Logo · Einstellungen
+    "hover": (182, 46),          # aufgeklappt: Aufnahme + Quellen-Pfeil · Logo · Einstellungen
     "recording": (164, 40),
     "handsfree": (232, 40),
     "mini": (44, 20),            # Freihand nach 3 s ohne Maus: klein, nur Mini-Pegel
@@ -38,7 +38,9 @@ SIZES = {                        # (Breite, Höhe) der Pille je Zustand
 
 
 # Knöpfe im aufgeklappten Zustand: Abstand von der Mitte (wie bei NoTime)
-SLOTS = {"record": -52, "logo": 0, "settings": 52}
+SLOTS = {"src": -34, "record": -60, "logo": 0, "settings": 58}   # "src" = dünner Pfeil: Tonquelle
+SLOT_R = {"src": 9}                                                # Trefferradius (Standard 17)
+SOURCES = (("mic", "Mikrofon"), ("system", "Laptop-Ton"), ("both", "Beides"))
 GLYPHS = {"settings": "\uE713", "record": "\uE7C8"}
 
 
@@ -47,6 +49,7 @@ class Pill(QWidget):
     pause_clicked = Signal()
     finish_clicked = Signal()
     open_window = Signal(str)        # "home" | "settings"
+    source_changed = Signal(str)     # "mic" | "system" | "both"
     start_handsfree = Signal()
     copy_last = Signal()
 
@@ -93,6 +96,10 @@ class Pill(QWidget):
         self._mini_timer.timeout.connect(self._go_mini)
 
         self._hover_slot = None
+        self.rec_source = "mic"
+        self._picker = False              # Mini-Auswahl der Tonquelle offen?
+        self._picker_rows = []
+        self._picker_hover = None
         self._bubble_text = ""
         self._bubble_a = 0.0
         self._bubble_target = 0.0
@@ -292,6 +299,7 @@ class Pill(QWidget):
     def _collapse(self):
         self._hovered = False
         self._hover_slot = None
+        self._picker = False
         if self.state == "handsfree":
             self._mini_timer.start()
         if self.state == "idle":
@@ -303,11 +311,25 @@ class Pill(QWidget):
             return None
         cx = r.center().x()
         for name, dx in SLOTS.items():
-            if abs(x - (cx + dx)) <= 17:
+            if abs(x - (cx + dx)) <= SLOT_R.get(name, 17):
                 return name
         return None
 
+    def _picker_row_at(self, x, y):
+        for rect, key in self._picker_rows:
+            if rect.contains(x, y):
+                return key
+        return None
+
     def mouseMoveEvent(self, e):
+        if self._picker:
+            ph = self._picker_row_at(e.position().x(), e.position().y())
+            if ph != self._picker_hover:
+                self._picker_hover = ph
+                self.setCursor(Qt.PointingHandCursor if ph else Qt.ArrowCursor)
+                self.update()
+            if ph:
+                return
         s = self._slot_at(e.position().x(), e.position().y())
         if s != self._hover_slot:
             self._hover_slot = s
@@ -327,7 +349,19 @@ class Pill(QWidget):
             elif r.contains(x, y):
                 self.pause_clicked.emit()          # Mitte antippen = Pause / weiter
             return
+        if self._picker:
+            key = self._picker_row_at(x, y)
+            self._picker = False
+            if key:
+                self.rec_source = key
+                self.source_changed.emit(key)
+                self.update()
+                return
         s = self._slot_at(x, y)
+        if s == "src":
+            self._picker = not self._picker
+            self.update()
+            return
         if s == "settings":
             self.open_window.emit("settings")
         elif s == "record":
@@ -345,6 +379,8 @@ class Pill(QWidget):
         loading = self.state == "loading"
         if self.state == "idle" and (self._hovered or r.width() > 60):
             self._paint_menu(p, r)
+            if self._picker and r.width() > 150:
+                self._paint_picker(p, r)
             p.end()
             return
         if idle:
@@ -465,10 +501,20 @@ class Pill(QWidget):
             if name == self._hover_slot:
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(c["hover"]))
-                p.drawEllipse(QPointF(x, cy), 17, 17)
+                rr = 11 if name == "src" else 17
+                p.drawEllipse(QPointF(x, cy), rr, rr)
             if name == "logo":
                 pm = self._logo_pixmap()
                 p.drawPixmap(QPointF(x - 14, cy - 14), pm)
+                continue
+            if name == "src":               # dünner Pfeil nach oben (nach unten, wenn offen)
+                col = QColor(c["pill_fg"])
+                col.setAlpha(230 if name == self._hover_slot or self._picker else 140)
+                p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                p.setBrush(Qt.NoBrush)
+                d = 1 if self._picker else -1
+                p.drawPolyline([QPointF(x - 4, cy - 2 * d), QPointF(x, cy + 2 * d), QPointF(x + 4, cy - 2 * d)])
+                p.setFont(f)
                 continue
             glyph = GLYPHS[name]
             color = QColor(c["pill_fg"])
@@ -478,6 +524,47 @@ class Pill(QWidget):
                 glyph = ""
             p.setPen(color)
             p.drawText(QRectF(x - 17, cy - 17, 34, 34), Qt.AlignCenter, glyph)
+
+    def _paint_picker(self, p, r):
+        """Mini-Auswahl über dem Aufnahme-Knopf: Mikrofon / Laptop-Ton / Beides."""
+        c = self.colors
+        row_h, pad, w = 30, 6, 136
+        h = len(SOURCES) * row_h + 2 * pad
+        x = max(4.0, r.center().x() + SLOTS["record"] - 22)
+        box = QRectF(x, r.top() - 8 - h, w, h)
+        p.setPen(Qt.NoPen)
+        for i in range(5, 0, -1):
+            p.setBrush(QColor(0, 0, 0, 9))
+            p.drawRoundedRect(box.adjusted(-i, -i + 2, i, i + 2), 14 + i, 14 + i)
+        p.setBrush(QColor(c["pill"]))
+        p.setPen(QPen(QColor(c["line"]), 1))
+        p.drawRoundedRect(box, 14, 14)
+        f = QFont("Inter", 10)
+        f.setStyleStrategy(QFont.StyleStrategy(QFont.PreferAntialias | QFont.NoSubpixelAntialias))
+        p.setFont(f)
+        self._picker_rows = []
+        for i, (key, text) in enumerate(SOURCES):
+            row = QRectF(box.left() + 4, box.top() + pad + i * row_h, w - 8, row_h)
+            self._picker_rows.append((row, key))
+            if key == self._picker_hover:
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(c["hover"]))
+                p.drawRoundedRect(row, 10, 10)
+            dot = QPointF(row.left() + 14, row.center().y())
+            fg = QColor(c["pill_fg"])
+            if key == self.rec_source:              # gewählte Quelle: gefüllter Punkt
+                p.setPen(Qt.NoPen)
+                p.setBrush(fg)
+                p.drawEllipse(dot, 3.5, 3.5)
+            else:
+                fg.setAlpha(110)
+                p.setPen(QPen(fg, 1.2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(dot, 3.5, 3.5)
+            tc = QColor(c["pill_fg"])
+            tc.setAlpha(240 if key == self.rec_source else 170)
+            p.setPen(tc)
+            p.drawText(row.adjusted(28, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
 
     def _text(self, p, r, s, size, color):
         f = QFont("Segoe UI", size)

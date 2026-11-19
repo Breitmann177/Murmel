@@ -46,7 +46,59 @@ class Resampler:
         return out
 
 
+class Loopback:
+    """Laptop-Ton (alles, was aus den Lautsprechern kommt) über WASAPI-Loopback – für Online-
+    Vorlesungen (Zoom, BBB, YouTube). Übernommen aus NoTime. Läuft nur während einer Aufnahme.
+    Achtung: Windows liefert bei völliger Stille KEINE Daten – das fangen wir unten ab."""
+
+    def __init__(self, on_audio):
+        self.on_audio = on_audio
+        self._pa = None
+        self._stream = None
+
+    def start(self):
+        import pyaudiowpatch as pa
+        self._pa = pa.PyAudio()
+        dev = self._pa.get_default_wasapi_loopback()
+        ch = int(dev["maxInputChannels"])
+        rs = Resampler(int(dev["defaultSampleRate"]))
+
+        def cb(in_data, frame_count, time_info, status):
+            a = np.frombuffer(in_data, dtype=np.float32)
+            if ch > 1:
+                a = a.reshape(-1, ch).mean(axis=1)
+            mono = rs(a.astype(np.float32))
+            if len(mono):
+                self.on_audio(mono)
+            return (None, pa.paContinue)
+
+        sr = int(dev["defaultSampleRate"])
+        self._stream = self._pa.open(format=pa.paFloat32, channels=ch, rate=sr, input=True,
+                                     input_device_index=dev["index"],
+                                     frames_per_buffer=int(sr * 0.02), stream_callback=cb)
+        self._stream.start_stream()
+
+    def stop(self):
+        try:
+            if self._stream is not None:
+                self._stream.stop_stream()
+                self._stream.close()
+        except Exception:
+            pass
+        try:
+            if self._pa is not None:
+                self._pa.terminate()
+        except Exception:
+            pass
+        self._stream = self._pa = None
+
+
 class Mic:
+    """Quellen: "mic" (Mikrofon), "system" (Laptop-Ton) oder "both" (beides gemischt).
+    Taktgeber ist immer das Mikrofon (läuft dauerhaft, gleichmäßig). Beim Laptop-Ton holen wir uns
+    pro Mikrofon-Block genau gleich viele Samples aus einem Puffer – fehlen welche (Stille, Windows
+    liefert dann nichts), wird mit Null aufgefüllt. So bleibt die Zeitachse lückenlos."""
+
     def __init__(self, device=None):
         self.device = device
         self.level = 0.0               # 0..~0.3, schnell hoch / langsam runter
@@ -57,6 +109,21 @@ class Mic:
         self.paused = False             # Freihand-Pause: Ton wird verworfen, Aufnahme bleibt offen
         self._stream = None
         self.device_name = ""
+        self.source = "mic"
+        self._loop = None
+        self._lb = np.zeros(0, np.float32)   # Puffer Laptop-Ton
+        self._lb_lock = threading.Lock()
+
+    def _on_loopback(self, mono):
+        with self._lb_lock:
+            self._lb = np.concatenate([self._lb, mono])[-SR:]   # max. 1 s Vorrat (Takt-Drift)
+
+    def _take_loopback(self, n):
+        with self._lb_lock:
+            take, self._lb = self._lb[:n], self._lb[n:]
+        if len(take) < n:
+            take = np.concatenate([take, np.zeros(n - len(take), np.float32)])
+        return take
 
     def start(self):
         import sounddevice as sd
@@ -70,7 +137,14 @@ class Mic:
             mono = rs(indata[:, 0].copy())
             if not len(mono):
                 return
-            rms = float(np.sqrt(np.mean(mono * mono)))
+            src = self.source if (self._chunks is not None and self._loop) else "mic"
+            if src == "system":
+                out = self._take_loopback(len(mono))
+            elif src == "both":
+                out = np.clip(mono + self._take_loopback(len(mono)), -1.0, 1.0)
+            else:
+                out = mono
+            rms = float(np.sqrt(np.mean(out * out)))
             self.level = rms if rms > self.level else self.level * 0.88 + rms * 0.12
             with self._lock:
                 self._ring.append(mono)
@@ -78,20 +152,40 @@ class Mic:
                 while self._ring_len - len(self._ring[0]) >= PRE_ROLL_S * SR:
                     self._ring_len -= len(self._ring.popleft())
                 if self._chunks is not None and not self.paused:
-                    self._chunks.append(mono)
+                    self._chunks.append(out)
 
         self._stream = sd.InputStream(device=self.device, channels=1, samplerate=sr,
                                       dtype="float32", blocksize=int(sr * 0.02), callback=cb)
         self._stream.start()
 
-    def begin(self):
+    def begin(self, source="mic") -> bool:
+        """Aufnahme starten. Gibt False zurück, wenn der Laptop-Ton nicht ging (dann nur Mikro)."""
         self.paused = False
+        ok = True
+        self.source = source
+        if source in ("system", "both"):
+            with self._lb_lock:
+                self._lb = np.zeros(0, np.float32)
+            try:
+                self._loop = Loopback(self._on_loopback)
+                self._loop.start()
+            except Exception:
+                self._loop, self.source, ok = None, "mic", False
         with self._lock:
-            self._chunks = list(self._ring)   # Pre-Roll vorneweg
+            # Pre-Roll (letzte 300 ms Mikro) nur, wenn das Mikro auch Teil der Aufnahme ist
+            self._chunks = list(self._ring) if self.source != "system" else []
+        return ok
+
+    def _stop_loopback(self):
+        if self._loop:
+            self._loop.stop()
+            self._loop = None
+        self.source = "mic"
 
     def end(self) -> np.ndarray:
         with self._lock:
             chunks, self._chunks = self._chunks or [], None
+        self._stop_loopback()
         return np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
 
     def snapshot(self) -> np.ndarray:
@@ -103,12 +197,14 @@ class Mic:
     def cancel(self):
         with self._lock:
             self._chunks = None
+        self._stop_loopback()
 
     @property
     def recording(self):
         return self._chunks is not None
 
     def close(self):
+        self._stop_loopback()
         try:
             if self._stream is not None:
                 self._stream.stop()
