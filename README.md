@@ -1,19 +1,26 @@
-<p align="center"><img src="assets/murmel.png" width="72" alt=""></p>
+<p align="center"><img src="assets/murmel.png" width="88" alt=""></p>
 
 <h1 align="center">Murmel</h1>
 
 <p align="center">Taste halten, sprechen, loslassen – der Text landet dort, wo dein Cursor ist.<br>
 Läuft komplett auf deinem Rechner: keine Cloud, kein Konto, kein API-Key.</p>
 
-## ⬇️ Download
+<p align="center">
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Windows.zip"><img src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&logo=windows11&logoColor=white" alt="Download für Windows"></a>
+  &nbsp;
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-macOS.zip"><img src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download für macOS"></a>
+  &nbsp;
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Linux.tar.gz"><img src="https://img.shields.io/badge/Download-Linux-E95420?style=for-the-badge&logo=linux&logoColor=white" alt="Download für Linux"></a>
+</p>
 
-| System | Download | Installieren |
-|---|---|---|
-| **Windows 10/11** | [**Murmel für Windows**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Windows.zip) | ZIP entpacken → `install.bat` doppelklicken |
-| **macOS 12+** | [**Murmel für macOS**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-macOS.zip) | ZIP entpacken → Terminal: `bash install-mac.sh` |
-| **Linux** | [**Murmel für Linux**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Linux.tar.gz) | Entpacken → Terminal: `./install.sh` |
+<p align="center"><sub>
+  <b>Windows:</b> entpacken → <code>install.bat</code> doppelklicken &nbsp;·&nbsp;
+  <b>macOS:</b> entpacken → im Terminal <code>bash install-mac.sh</code> &nbsp;·&nbsp;
+  <b>Linux:</b> entpacken → <code>./install.sh</code><br>
+  Beim ersten Start wird das Sprachmodell einmalig geladen (0,5–1,6 GB).
+</sub></p>
 
-Beim ersten Start lädt Murmel einmalig das Sprachmodell herunter (je nach Rechner 0,5–1,6 GB).
+---
 
 ## So benutzt du es
 
