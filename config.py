@@ -1,5 +1,6 @@
 """Einstellungen als JSON (atomar gespeichert):
-Windows: %APPDATA%\\Murmel\\settings.json   Linux: ~/.config/murmel/settings.json"""
+Windows: %APPDATA%\\Murmel\\settings.json   Linux: ~/.config/murmel/settings.json
+macOS: ~/Library/Application Support/Murmel/settings.json"""
 import json
 import os
 import sys
@@ -8,6 +9,8 @@ from pathlib import Path
 APP_NAME = "Murmel"
 if sys.platform == "win32":
     APP_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
+elif sys.platform == "darwin":
+    APP_DIR = Path.home() / "Library" / "Application Support" / APP_NAME
 else:
     APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "murmel"
 SETTINGS_PATH = APP_DIR / "settings.json"

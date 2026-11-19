@@ -306,7 +306,7 @@ class Controller(QObject):
     def on_hotkey(self, ev):
         now = time.monotonic()
         if ev == "hook_failed":
-            self.pill.set_state("error", "Tastatur-Hook fehlgeschlagen", 5000)
+            self.pill.set_state("error", osapi.HOOK_FAILED, 6000)
         elif ev == "press":
             if self.state == "handsfree":
                 self.finish()                     # im Freihand-Modus beendet erneutes Tippen

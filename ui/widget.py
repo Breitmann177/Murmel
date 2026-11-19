@@ -175,6 +175,9 @@ class Pill(QWidget):
     def showEvent(self, e):
         super().showEvent(e)
         self._update_mask()
+        if sys.platform == "darwin":                # macOS: auf allen Spaces + über Vollbild-Apps
+            import mac_util
+            mac_util.overlay(self)
         try:   # WS_EX_NOACTIVATE + TOOLWINDOW zusätzlich auf Win32-Ebene setzen
             hwnd = int(self.winId())
             u = ctypes.windll.user32

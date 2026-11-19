@@ -58,6 +58,9 @@ class Loopback:
         self._stream = None
 
     def start(self):
+        import sys
+        if sys.platform != "win32":
+            return self._start_virtual()
         import pyaudiowpatch as pa
         self._pa = pa.PyAudio()
         dev = self._pa.get_default_wasapi_loopback()
@@ -79,7 +82,41 @@ class Loopback:
                                      frames_per_buffer=int(sr * 0.02), stream_callback=cb)
         self._stream.start_stream()
 
+    def _start_virtual(self):
+        """macOS/Linux: Systemton kommt über ein virtuelles Gerät, das wie ein Mikrofon aussieht.
+        macOS: "BlackHole" (kostenlos, einmal installieren und als Ausgabe/Multi-Output wählen).
+        Linux: PulseAudio/PipeWire "Monitor of …"-Quelle."""
+        import sounddevice as sd
+        dev = None
+        for i, d in enumerate(sd.query_devices()):
+            n = d["name"].lower()
+            if d["max_input_channels"] > 0 and any(k in n for k in ("blackhole", "monitor", "loopback", "soundflower")):
+                dev = i
+                break
+        if dev is None:
+            raise RuntimeError("Kein Gerät für Laptop-Ton gefunden (macOS: BlackHole installieren)")
+        info = sd.query_devices(dev, "input")
+        ch = min(2, int(info["max_input_channels"]))
+        rs = Resampler(int(info["default_samplerate"]))
+
+        def cb(indata, frames, t, status):
+            mono = rs(indata.mean(axis=1).astype(np.float32))
+            if len(mono):
+                self.on_audio(mono)
+
+        self._sd = sd.InputStream(device=dev, channels=ch, samplerate=int(info["default_samplerate"]),
+                                  dtype="float32", blocksize=int(info["default_samplerate"] * 0.02), callback=cb)
+        self._sd.start()
+
     def stop(self):
+        sd_stream = getattr(self, "_sd", None)
+        if sd_stream is not None:
+            try:
+                sd_stream.stop()
+                sd_stream.close()
+            except Exception:
+                pass
+            self._sd = None
         try:
             if self._stream is not None:
                 self._stream.stop_stream()

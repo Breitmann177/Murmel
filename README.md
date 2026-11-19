@@ -1,84 +1,111 @@
-# Murmel
+<p align="center"><img src="assets/murmel.png" width="72" alt=""></p>
 
-Lokale Diktier-App für **Windows 11 und Linux**. **Strg + Win (Linux: Strg + Super) halten, sprechen, loslassen** – der Text landet dort, wo der Cursor ist. Alles läuft auf dem eigenen Rechner: keine Cloud, kein Konto, kein API-Key.
+<h1 align="center">Murmel</h1>
+
+<p align="center">Taste halten, sprechen, loslassen – der Text landet dort, wo dein Cursor ist.<br>
+Läuft komplett auf deinem Rechner: keine Cloud, kein Konto, kein API-Key.</p>
+
+## ⬇️ Download
+
+| System | Download | Installieren |
+|---|---|---|
+| **Windows 10/11** | [**Murmel für Windows**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Windows.zip) | ZIP entpacken → `install.bat` doppelklicken |
+| **macOS 12+** | [**Murmel für macOS**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-macOS.zip) | ZIP entpacken → Terminal: `bash install-mac.sh` |
+| **Linux** | [**Murmel für Linux**](https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Linux.tar.gz) | Entpacken → Terminal: `./install.sh` |
+
+Beim ersten Start lädt Murmel einmalig das Sprachmodell herunter (je nach Rechner 0,5–1,6 GB).
+
+## So benutzt du es
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Diktieren (halten) | Strg + Win | Ctrl + Cmd | Strg + Super |
+| Freihand | 2× tippen | 2× tippen | 2× tippen |
+| Befehl an die KI | Strg + Win + Alt | Ctrl + Cmd + Option | Strg + Super + Alt |
+| Abbrechen | Esc | Esc | Esc |
+
+Fahr mit der Maus über die kleine Pille unten am Bildschirm: **●** startet eine längere Aufnahme
+(z. B. eine Vorlesung), die als `.txt` gespeichert wird. Der schmale Pfeil daneben wählt die
+Tonquelle: **Mikrofon**, **Laptop-Ton** oder **beides**.
 
 ## Was Murmel kann
 
-- **Push-to-Talk** mit Strg + Win, **Freihand** per Doppeltipp oder ● in der Pille (mit Pause, bis 4 h)
-- **Live-Vorschau** beim Sprechen (mit NVIDIA-GPU), eingefügt wird der saubere Durchlauf über die ganze Aufnahme
-- **Lange Aufnahmen** werden schon während der Aufnahme in Häppchen erkannt
+- **Push-to-Talk** und **Freihand** (mit Pause, bis 4 h), Live-Vorschau beim Sprechen (mit NVIDIA-GPU)
+- **Aufnahmen** über die Pille werden schon während der Aufnahme als Datei gespeichert
 - **Bereinigung**: Füllwörter, Selbstkorrekturen („um drei, nein, um vier“), „neue Zeile“, Listen, Fragezeichen
 - **Wörterbuch**, **Snippets** und **Stil pro App** (locker in Chats, formell in Mail/Word, Code im Editor)
-- Optional **Ollama** (lokale KI) für den Stark-Modus und den Command Mode (Strg + Win + Alt)
+- Optional **Ollama** (lokale KI) für den Stark-Modus und den Befehls-Modus
 - Verlauf, Statistiken, Hell/Dunkel, Bildschirm-aus während langer Aufnahmen (OLED)
 
-## Datenschutz
+## Installation im Detail
 
-- Netzwerk nur für den einmaligen Modell-Download (Hugging Face) und zu Ollama auf `localhost`
-- Verlauf, Wörterbuch und Einstellungen liegen in `%APPDATA%\Murmel` (Linux: `~/.config/murmel`) – nicht in diesem Repo
-- Diktate werden vom Windows-Zwischenablageverlauf (Win + V) ausgenommen; die alte Zwischenablage wird wiederhergestellt
-- Der Tastatur-Hook reagiert nur auf die eingestellte Tastenkombination und speichert keine Tasten
-- Das Log (`murmel.log`) enthält keine diktierten Texte, nur Zeiten und Längen
+<details><summary><b>Windows</b></summary>
 
-## Installation (Windows)
+1. **Python 3.12 (64-bit)** von [python.org](https://www.python.org/downloads/) installieren, dabei
+   „Add python.exe to PATH“ anhaken.
+2. `Murmel-Windows.zip` entpacken und **`install.bat`** doppelklicken. Das legt eine eigene
+   Umgebung an, installiert alles, erstellt einen Startmenü-Eintrag und startet Murmel.
 
-1. **Python 3.12 (64-bit)** von [python.org](https://www.python.org/downloads/) installieren, dabei „Add python.exe to PATH“ anhaken.
-2. Dieses Repo herunterladen (Code → Download ZIP) und entpacken.
-3. **`install.bat`** doppelklicken. Das legt eine eigene Umgebung an, installiert alles, erstellt einen Eintrag im Startmenü und startet Murmel.
-
-Mit NVIDIA-GPU werden die CUDA-Pakete automatisch mitinstalliert und `large-v3-turbo` auf der GPU genutzt (beim ersten Start ~1,6 GB Download), sonst `small` auf der CPU. Autostart lässt sich in den Einstellungen einschalten.
-
-<details><summary>Manuell</summary>
-
-```bash
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt        # ohne NVIDIA
-.venv\Scripts\python -m pip install -r requirements-gpu.txt    # mit NVIDIA
-.venv\Scripts\pythonw main.pyw
-```
+Mit NVIDIA-GPU werden die CUDA-Pakete automatisch mitinstalliert und `large-v3-turbo` auf der
+GPU genutzt, sonst `small` auf der CPU. Autostart lässt sich in den Einstellungen einschalten.
 </details>
 
-## Installation (Linux)
+<details><summary><b>macOS</b></summary>
+
+1. `Murmel-macOS.zip` entpacken (z. B. in „Downloads“).
+2. Terminal öffnen und eingeben (Ordnerpfad anpassen):
+   ```bash
+   cd ~/Downloads/Murmel
+   bash install-mac.sh
+   ```
+   Das Skript lädt ein passendes Python, installiert alles und legt **Murmel.app** in
+   `~/Applications` an.
+3. **Zwei Erlaubnisse** (einmalig):
+   - **Mikrofon** – macOS fragt beim ersten Diktat selbst.
+   - **Bedienungshilfen** – Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen →
+     „Murmel“ einschalten, dann Murmel neu starten. Nötig für das Tastenkürzel und das Einfügen.
+
+Murmel läuft oben in der Menüleiste (kein Dock-Symbol). Auf Apple-Chips läuft die Erkennung auf
+dem Prozessor (~1–2 s pro Diktat). **Laptop-Ton** aufnehmen geht mit dem kostenlosen
+[BlackHole 2ch](https://existential.audio/blackhole/).
+</details>
+
+<details><summary><b>Linux</b></summary>
 
 Getestet auf Fedora mit GNOME (Wayland). Das Skript kennt auch Ubuntu/Debian, Arch und openSUSE.
 
 ```bash
-git clone https://github.com/Breitmann177/Murmel.git
-cd Murmel
+tar xzf Murmel-Linux.tar.gz && cd Murmel
 ./install.sh
 ```
 
-Das Skript installiert ein paar Systempakete, legt eine eigene Python-3.13-Umgebung an (über
-`uv`, egal welches Python dein System hat), richtet die Tastenrechte ein und trägt Murmel ins
-App-Menü ein. Danach einmal ab- und wieder anmelden.
+Das Skript installiert ein paar Systempakete, legt eine eigene Python-Umgebung an (über `uv`),
+richtet die Tastenrechte ein und trägt Murmel ins App-Menü ein. Danach einmal ab- und wieder
+anmelden.
 
-**Unterschiede zu Windows**
-
-- Tastenkürzel: Strg + Super (Super = Windows-Taste). Unter Wayland gibt es keine globalen
-  Tasten-Hooks, deshalb liest Murmel die Tastatur über evdev.
+- Unter Wayland gibt es keine globalen Tasten-Hooks, deshalb liest Murmel die Tastatur über evdev.
 - Eingefügt wird über eine virtuelle Tastatur (uinput): Strg + V, in Terminals Strg + Shift + V.
-- Die aktive App erkennt Murmel über die Barrierefreiheits-Schnittstelle (AT-SPI). Das klappt bei
-  GTK/Qt-Apps und Terminals. Wenn eine App nicht erkannt wird, gilt der Stil „Standard“.
-- Mikrofon: immer das Standardgerät von PipeWire/PulseAudio (in den Systemeinstellungen wählbar).
-- Esc bricht die Aufnahme ab, kommt aber zusätzlich auch bei der App an.
+- **Rechte:** `install.sh` legt die udev-Regel `/etc/udev/rules.d/70-murmel.rules` an. Damit darf
+  der angemeldete Nutzer Tastaturen lesen und eine virtuelle Tastatur anlegen. Murmel achtet nur
+  auf die eingestellte Tastenkombination und speichert keine Tasten.
+</details>
 
-**Rechte:** `install.sh` legt die udev-Regel `/etc/udev/rules.d/70-murmel.rules` an. Damit darf der
-gerade angemeldete Nutzer Tastaturen lesen und eine virtuelle Tastatur anlegen. Murmel achtet nur
-auf die eingestellte Tastenkombination und speichert keine Tasten. Die Regel gilt aber für alle
-Programme dieses Nutzers. Wer das nicht möchte, löscht die Datei, dann bleibt der Text nur in
-der Zwischenablage.
+## Datenschutz
 
-## Tests
+- Netzwerk nur für den einmaligen Modell-Download (Hugging Face) und zu Ollama auf `localhost`
+- Verlauf, Wörterbuch und Einstellungen bleiben auf deinem Rechner
+  (Windows `%APPDATA%\Murmel`, macOS `~/Library/Application Support/Murmel`, Linux `~/.config/murmel`)
+- Diktate landen nicht im Zwischenablage-Verlauf; die alte Zwischenablage wird wiederhergestellt
+- Das Tastenkürzel reagiert nur auf die eingestellte Kombination und speichert keine Tasten
+- Das Log (`murmel.log`) enthält keine diktierten Texte, nur Zeiten und Längen
+
+## Für Entwickler
 
 ```bash
-.venv\Scripts\python -m unittest discover tests
+python -m unittest discover tests
 ```
-
-## Lizenzen von Drittanbietern
-
-- Schriften: Instrument Serif, Inter – SIL Open Font License (`assets/fonts/OFL-*.txt`)
-- Icons: Lucide – ISC (`assets/icons/LICENSE-lucide.txt`)
 
 ## Lizenz
 
-MIT – siehe [LICENSE](LICENSE). Schriften und Icons stehen unter ihren eigenen Lizenzen (siehe oben).
+MIT – siehe [LICENSE](LICENSE). Schriften (Instrument Serif, Inter – SIL Open Font License) und
+Icons (Lucide – ISC) stehen unter ihren eigenen Lizenzen, siehe `assets/`.

@@ -23,9 +23,14 @@ DEFAULT_APPS = {
     "codium": "code", "code-oss": "code", "zed": "code", "ptyxis": "code", "gnome-terminal-server": "code",
     "kgx": "code", "konsole": "code", "kitty": "code", "alacritty": "code", "wezterm-gui": "code",
     "foot": "code", "ghostty": "code", "tilix": "code", "pycharm": "code", "idea": "code",
+    # macOS (App-Namen statt Programmdateien)
+    "microsoft outlook": "formal", "microsoft word": "formal", "mail": "formal", "pages": "formal",
+    "messages": "casual", "nachrichten": "casual",
+    "terminal": "code", "iterm2": "code", "xcode": "code", "visual studio code": "code",
 }
 BROWSERS = {"chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "arc",
-            "chromium", "google-chrome", "brave-browser", "microsoft-edge", "librewolf", "zen"}
+            "chromium", "google-chrome", "brave-browser", "microsoft-edge", "librewolf", "zen",
+            "google chrome", "safari", "microsoft edge"}
 TITLE_RULES = (("gmail", "formal"), ("outlook", "formal"), ("whatsapp", "casual"),
                ("discord", "casual"), ("slack", "casual"), ("telegram", "casual"),
                ("github", "code"), ("chatgpt", "standard"), ("claude", "standard"))

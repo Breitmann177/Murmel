@@ -49,6 +49,9 @@ def play(name, enabled=True):
             import winsound
             winsound.PlaySound(str(_path(name)), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
             return
+        if sys.platform == "darwin":                # macOS: eingebautes afplay
+            subprocess.Popen(["afplay", str(_path(name))], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
         player = next((p for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
         if player:
             args = [player, "-q", str(_path(name))] if player == "aplay" else [player, str(_path(name))]
