@@ -6,11 +6,11 @@
 Läuft komplett auf deinem Rechner: keine Cloud, kein Konto, kein API-Key.</p>
 
 <p align="center">
-  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Windows.zip"><img src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&logo=windows11&logoColor=white" alt="Download für Windows"></a>
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Windows.zip"><img src="https://img.shields.io/badge/%E2%86%93%20Windows-0078D4?style=for-the-badge" alt="Download für Windows"></a>
   &nbsp;
-  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-macOS.zip"><img src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download für macOS"></a>
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-macOS.zip"><img src="https://img.shields.io/badge/%E2%86%93%20macOS-6E6E78?style=for-the-badge" alt="Download für macOS"></a>
   &nbsp;
-  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Linux.tar.gz"><img src="https://img.shields.io/badge/Download-Linux-E95420?style=for-the-badge&logo=linux&logoColor=white" alt="Download für Linux"></a>
+  <a href="https://github.com/Breitmann177/Murmel/releases/latest/download/Murmel-Linux.tar.gz"><img src="https://img.shields.io/badge/%E2%86%93%20Linux-E95420?style=for-the-badge" alt="Download für Linux"></a>
 </p>
 
 <p align="center"><sub>
