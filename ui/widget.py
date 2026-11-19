@@ -510,10 +510,10 @@ class Pill(QWidget):
             if name == "src":               # dünner Pfeil nach oben (nach unten, wenn offen)
                 col = QColor(c["pill_fg"])
                 col.setAlpha(230 if name == self._hover_slot or self._picker else 140)
-                p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                p.setPen(QPen(col, 0.9, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))   # haarfein
                 p.setBrush(Qt.NoBrush)
                 d = 1 if self._picker else -1
-                p.drawPolyline([QPointF(x - 4, cy - 2 * d), QPointF(x, cy + 2 * d), QPointF(x + 4, cy - 2 * d)])
+                p.drawPolyline([QPointF(x - 3.5, cy - 1.6 * d), QPointF(x, cy + 1.6 * d), QPointF(x + 3.5, cy - 1.6 * d)])
                 p.setFont(f)
                 continue
             glyph = GLYPHS[name]
