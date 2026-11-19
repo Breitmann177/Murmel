@@ -349,6 +349,7 @@ class Pill(QWidget):
             elif r.contains(x, y):
                 self.pause_clicked.emit()          # Mitte antippen = Pause / weiter
             return
+        was_open = self._picker
         if self._picker:
             key = self._picker_row_at(x, y)
             self._picker = False
@@ -359,7 +360,7 @@ class Pill(QWidget):
                 return
         s = self._slot_at(x, y)
         if s == "src":
-            self._picker = not self._picker
+            self._picker = not was_open        # zweiter Klick klappt wieder zu
             self.update()
             return
         if s == "settings":
