@@ -1,12 +1,9 @@
 .venv/
-.idea/
 __pycache__/
-hermes.db*
-pdfs/
-.env
-stimmen/
-hoerproben/
+*.pyc
+*.log
 
+.env
 .env.*
 !.env.example
 *.pem
@@ -19,4 +16,3 @@ hoerproben/
 *.db
 *.sqlite
 *.sqlite3
-*.log
